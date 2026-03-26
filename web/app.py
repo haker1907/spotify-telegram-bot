@@ -1,0 +1,966 @@
+from flask import Flask, request, jsonify, send_file, render_template
+from flask_cors import CORS
+import asyncio
+import threading
+import os
+import sys
+
+# Добавляем корневую директорию в путь для импорта модулей
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import config
+from services.spotify_service import SpotifyService
+from services.download_service import DownloadService
+from database.db_manager import DatabaseManager
+
+app = Flask(__name__)
+CORS(app)
+
+# Инициализация сервисов
+spotify_service = SpotifyService()
+download_service = DownloadService()
+db = DatabaseManager()
+
+# Telegram Storage Service будет инициализирован при первом использовании
+telegram_storage = None
+backup_service = None
+
+def get_telegram_storage():
+    """Ленивая инициализация Telegram Storage Service"""
+    global telegram_storage
+    if telegram_storage is None:
+        from services.telegram_storage_service import TelegramStorageService
+        telegram_storage = TelegramStorageService()
+    return telegram_storage
+
+def get_backup_service():
+    """Ленивая инициализация Database Backup Service"""
+    global backup_service
+    if backup_service is None:
+        from services.db_backup_service import DatabaseBackupService
+        backup_service = DatabaseBackupService(
+            storage_service=get_telegram_storage(),
+            db_path=config.DATABASE_URL.replace('sqlite+aiosqlite:///', ''),
+            db_manager=db
+        )
+    return backup_service
+
+# Флаг и замок инициализации БД
+db_initialized = False
+init_lock = threading.Lock()
+
+def run_background_sync():
+    """Фоновая задача для глубокой синхронизации (Deep Sync)"""
+    try:
+        import threading
+        import time
+        print(f"🛰️  [BACKGROUND-{threading.get_ident()}] Starting asynchronous Deep Sync task...")
+        
+        # Даем сети время стабилизироваться (критично для Railway)
+        # 30 секунд - это время, когда и бот, и веб-сервер уже полностью запущены
+        print(f"⏳ [BACKGROUND] Waiting 30s for network to be fully ready...", flush=True)
+        time.sleep(30)
+        
+        # Создаем новый event loop для этого потока
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        from services.telegram_storage_sync import DeepSyncService
+        sync_service = DeepSyncService(get_telegram_storage(), db, download_service, spotify_service)
+        
+        # Запускаем синхронизацию
+        print(f"🛰️  [BACKGROUND] Triggering deep scan (Full History)...", flush=True)
+        count = loop.run_until_complete(sync_service.run_deep_sync(range_size=100000))
+        print(f"✅ [BACKGROUND-{threading.get_ident()}] Deep Sync completed! Found {count} tracks")
+        
+        loop.close()
+    except Exception as e:
+        print(f"❌ [BACKGROUND] Deep Sync failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+def ensure_db_initialized():
+    """Фоновая инициализация БД: только проверка на Deep Sync, если библиотека пуста"""
+    global db_initialized
+    print(f"🕵️  [WEB] ensure_db_initialized called (initialized={db_initialized})", flush=True)
+    with init_lock:
+        if not db_initialized:
+            try:
+                print("🌐 [WEB] Worker initializing database connection...")
+                
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                # 1. Применяем настройки WAL mode/схемы для этого процесса
+                loop.run_until_complete(db.init_db())
+                
+                # 2. Проверка на пустоту для Deep Sync (только если база пуста)
+                is_empty = loop.run_until_complete(db.is_library_empty())
+                if is_empty:
+                    import threading
+                    print("🚀 [WEB] Library is EMPTY. Triggering background Deep Sync...")
+                    thread = threading.Thread(target=run_background_sync)
+                    thread.daemon = True
+                    thread.start()
+                else:
+                    print("✅ [WEB] Library is ready.")
+                
+                loop.close()
+                db_initialized = True
+            except Exception as e:
+                print(f"❌ [WEB] Database connection init failed: {e}")
+                db_initialized = True
+
+@app.before_request
+def before_request():
+    """Инициализация БД перед первым запросом, пропуск для health-check"""
+    if request.path != '/health':
+        print(f"📥 [WEB] Request: {request.method} {request.path}", flush=True)
+    
+    if request.path == '/health':
+        return
+    ensure_db_initialized()
+
+@app.route('/health')
+def health_check():
+    return jsonify({'status': 'ok'}), 200
+
+@app.route('/')
+def index():
+    """Главная страница"""
+    return render_template('index.html')
+
+@app.route('/api/sync/deep', methods=['POST'])
+def sync_deep():
+    """Запустить глубокую синхронизацию (сканирование истории канала)"""
+    try:
+        from services.telegram_storage_sync import DeepSyncService
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        storage = get_telegram_storage()
+        sync_service = DeepSyncService(storage, db, download_service, spotify_service)
+        
+        # Получаем параметры из запроса
+        data = request.json or {}
+        range_size = data.get('range', 100000)
+        
+        count = loop.run_until_complete(sync_service.run_deep_sync(range_size=range_size))
+        
+        # Сразу делаем backup после синхронизации
+        backup_svc = get_backup_service()
+        loop.run_until_complete(backup_svc.backup_to_telegram())
+        
+        loop.close()
+        return jsonify({'success': True, 'found_count': count})
+        
+    except Exception as e:
+        print(f"❌ Deep Sync error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/search', methods=['POST'])
+def search():
+    """Поиск треков (БД + Spotify)"""
+    try:
+        data = request.json
+        query = data.get('query', '')
+        
+        if not query:
+            return jsonify({'error': 'Query is required'}), 400
+        
+        # Проверяем, является ли query Spotify URL
+        if 'spotify.com' in query or 'open.spotify' in query:
+            return search_by_url(query)
+        
+        # Обычный поиск по тексту
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # 1. Сначала ищем во внутренней базе (Discover)
+        discover_tracks = []
+        try:
+            discover_tracks = loop.run_until_complete(db.search_telegram_files(query, limit=10))
+            print(f"🏠 [WEB] Found {len(discover_tracks)} tracks in Discover database")
+        except Exception as db_e:
+            print(f"⚠️ [WEB] Database search failed: {db_e}")
+
+        # 2. Ищем в Spotify
+        spotify_tracks_raw = []
+        try:
+            spotify_tracks_raw = loop.run_until_complete(spotify_service.search_track(query))
+        except Exception as sp_e:
+            print(f"⚠️ [WEB] Spotify search failed: {sp_e}")
+        
+        loop.close()
+        
+        # Объединяем результаты и убираем дубликаты
+        seen_ids = set()
+        final_tracks = []
+        
+        # Приоритет - Discover
+        for track in discover_tracks:
+            seen_ids.add(track['id'])
+            final_tracks.append({
+                'id': track['id'],
+                'name': f"✨ {track['name']}",
+                'artist': track['artist'],
+                'album': track.get('album'),
+                'duration': 0, # В Discover может не быть длительности
+                'image': track.get('image'),
+                'preview_url': None,
+                'from_discover': True
+            })
+            
+        # Добавляем из Spotify то, чего нет в Discover
+        for track in spotify_tracks_raw:
+            if track.get('id') not in seen_ids:
+                final_tracks.append({
+                    'id': track.get('id'),
+                    'name': track.get('name'),
+                    'artist': track.get('artist'),
+                    'album': track.get('album'),
+                    'duration': (track.get('duration_ms', 0) // 1000) if track.get('duration_ms') else 0,
+                    'image': track.get('image_url'),
+                    'preview_url': track.get('preview_url')
+                })
+        
+        return jsonify({'tracks': final_tracks[:20]})
+    
+    except Exception as e:
+        print(f"❌ Comprehensive search error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/sync-library', methods=['POST'])
+def sync_library():
+    """Синхронизировать библиотеку (перенести данные из старых таблиц в Discovery)"""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Получаем все треки с легаси ID
+        async def run_sync():
+            async with db.async_session() as session:
+                from database.models import Track, TrackCache, TelegramFile
+                from sqlalchemy import select
+                from datetime import datetime
+                
+                added_count = 0
+                # 1. Сначала из Track.telegram_file_id
+                result = await session.execute(select(Track).where(Track.telegram_file_id != None))
+                for track in result.scalars().all():
+                    exists = await session.get(TelegramFile, track.id)
+                    if not exists:
+                        session.add(TelegramFile(
+                            track_id=track.id,
+                            file_id=track.telegram_file_id,
+                            artist=track.artist,
+                            track_name=track.name,
+                            uploaded_at=track.cached_at or track.created_at or datetime.utcnow()
+                        ))
+                        added_count += 1
+                
+                # 2. Потом из TrackCache
+                result = await session.execute(select(TrackCache))
+                for entry in result.scalars().all():
+                    exists = await session.get(TelegramFile, entry.track_id)
+                    if not exists:
+                        track = await session.get(Track, entry.track_id)
+                        if track:
+                            session.add(TelegramFile(
+                                track_id=entry.track_id,
+                                file_id=entry.telegram_file_id,
+                                artist=track.artist,
+                                track_name=track.name,
+                                uploaded_at=entry.created_at or datetime.utcnow()
+                            ))
+                            added_count += 1
+                
+                await session.commit()
+                return added_count
+        
+        count = loop.run_until_complete(run_sync())
+        
+        # Сразу делаем backup после синхронизации
+        backup_svc = get_backup_service()
+        loop.run_until_complete(backup_svc.backup_to_telegram())
+        
+        loop.close()
+        return jsonify({'success': True, 'added_count': count})
+        
+    except Exception as e:
+        print(f"❌ Sync error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/library', methods=['GET'])
+def get_library():
+    """Получить все треки из библиотеки (кэша)"""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        tracks_dict = loop.run_until_complete(db.get_library_tracks(limit=1000))
+        loop.close()
+        
+        print(f"🌐 [API] /api/library returning {len(tracks_dict)} tracks", flush=True)
+        return jsonify({'tracks': tracks_dict})
+        
+    except Exception as e:
+        print(f"❌ Error in get_library: {e}")
+        return jsonify({'error': str(e)}), 500
+
+def search_by_url(url):
+    """Поиск по Spotify URL"""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        info = None
+        collection_name = None
+        
+        # Определяем тип URL (track, album, playlist, artist)
+        if '/track/' in url:
+            track_info = loop.run_until_complete(spotify_service.get_track_info_from_url(url))
+            loop.close()
+            
+            if track_info:
+                return jsonify({
+                    'tracks': [{
+                        'id': track_info.get('id', ''),
+                        'name': track_info.get('name'),
+                        'artist': track_info.get('artist'),
+                        'album': track_info.get('album', ''),
+                        'duration': 0,
+                        'image': track_info.get('image_url'),
+                        'preview_url': None
+                    }]
+                })
+        
+        elif '/playlist/' in url:
+            info = loop.run_until_complete(spotify_service.get_playlist_info(url))
+        elif '/album/' in url:
+            info = loop.run_until_complete(spotify_service.get_album_info(url))
+        elif '/artist/' in url:
+            info = loop.run_until_complete(spotify_service.get_artist_info(url))
+        
+        loop.close()
+        
+        if info and info.get('tracks'):
+            # Формируем треки
+            tracks = []
+            for track in info['tracks']:
+                tracks.append({
+                    'id': track.get('id', f"{track['artist']}_{track['name']}"),
+                    'name': track['name'],
+                    'artist': track['artist'],
+                    'album': track.get('album') or info['name'],
+                    'duration': track.get('duration', 0),
+                    'image': track.get('image'),
+                    'preview_url': None,
+                    'collection_name': info['name'],
+                    'collection_type': info.get('type', 'collection')
+                })
+            
+            return jsonify({
+                'tracks': tracks,
+                'collection_info': {
+                    'name': info['name'],
+                    'type': info.get('type', 'collection'),
+                    'total_tracks': len(tracks)
+                }
+            })
+            
+        return jsonify({'tracks': [], 'error': 'No tracks found in this link'})
+    
+    except Exception as e:
+        print(f"❌ Error in search_by_url: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e), 'tracks': []})
+
+@app.route('/api/download', methods=['POST'])
+def download():
+    """Скачивание трека"""
+    # Создаем один loop на весь запрос
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        data = request.json
+        track_id = data.get('track_id')
+        track_name = data.get('track_name')
+        track_artist = data.get('track_artist')
+        quality = data.get('quality', '320')
+        file_format = data.get('format', 'mp3')
+        
+        # Если есть имя и исполнитель, используем их напрямую
+        if track_name and track_artist:
+            # 1. Скачиваем файл
+            result = loop.run_until_complete(
+                download_service.search_and_download(
+                    track_artist,
+                    track_name,
+                    quality,
+                    file_format
+                )
+            )
+            
+            if result and result.get('file_path') and os.path.exists(result['file_path']):
+                file_path = result['file_path']
+                
+                # РЕГИСТРАЦИЯ В DISCOVER (Функция для надежности)
+                try:
+                    # Генерируем ID если его нет
+                    if not track_id:
+                        import hashlib
+                        unique_string = f"{track_artist}_{track_name}".lower()
+                        track_id = hashlib.md5(unique_string.encode()).hexdigest()[:16]
+                    
+                    # Используем метаданные из YouTube (thumbnail) для изображения
+                    track_data = {
+                        'id': track_id,
+                        'name': track_name,
+                        'artist': track_artist,
+                        'spotify_url': f"https://open.spotify.com/search/{track_artist} {track_name}",
+                        'image_url': result.get('thumbnail')  # Используем YouTube thumbnail
+                    }
+                    
+                    # 1. Создаем трек в БД с изображением из YouTube
+                    loop.run_until_complete(db.get_or_create_track(track_data))
+                    
+                    # 2. ПРОВЕРЯЕМ ДУБЛИКАТЫ ПЕРЕД ЗАГРУЗКОЙ (Функция deduplication)
+                    existing_file = loop.run_until_complete(db.get_telegram_file(track_id))
+                    if not existing_file:
+                        existing_file = loop.run_until_complete(db.get_telegram_file_by_name(track_artist, track_name))
+                    
+                    if existing_file:
+                        print(f"✅ Track already in Telegram Storage, skipping duplicate upload: {track_name}")
+                        file_id = existing_file.file_id
+                    else:
+                        # Загружаем в Telegram Storage (чтобы появился в Discover)
+                        print(f"📤 Auto-uploading web download to Telegram: {track_name}")
+                        upload_result = get_telegram_storage().upload_file(file_path, f"🎵 {track_artist} - {track_name}")
+                        file_id = upload_result.get('file_id') if upload_result else None
+                    
+                    if file_id:
+                        # Сохраняем во все кэш-таблицы
+                        loop.run_until_complete(db.update_track_cache(track_id, file_id, file_format, quality))
+                        loop.run_until_complete(db.save_telegram_file(
+                            track_id=track_id, 
+                            file_id=file_id, 
+                            artist=track_artist, 
+                            track_name=track_name, 
+                            file_size=result.get('file_size', 0)
+                        ))
+                except Exception as reg_e:
+                    print(f"⚠️ Warning: Registration in discovery failed: {reg_e}")
+                return send_file(
+                    file_path,
+                    as_attachment=True,
+                    download_name=f"{track_artist} - {track_name}.{file_format}"
+                )
+            else:
+                error_msg = result.get('error') if result else "Unknown error"
+                loop.close()
+                return jsonify({'error': f"Download failed: {error_msg}"}), 500
+        
+        # Иначе используем track_id
+        if not track_id:
+            loop.close()
+            return jsonify({'error': 'Track ID or name/artist is required'}), 400
+        
+        # 1. Получаем информацию о треке (ВАЖНО: До скачивания для метаданных)
+        track_info = loop.run_until_complete(spotify_service.get_track_info(track_id))
+        
+        if not track_info:
+            loop.close()
+            return jsonify({'error': 'Track not found'}), 404
+            
+        # 2. Скачиваем трек
+        result = loop.run_until_complete(
+            download_service.search_and_download(
+                track_info['artist'],
+                track_info['name'],
+                quality,
+                file_format
+            )
+        )
+        
+        if result and result.get('file_path') and os.path.exists(result['file_path']):
+            file_path = result['file_path']
+            
+
+            # РЕГИСТРАЦИЯ В DISCOVER
+            try:
+                # 1. ГАРАНТИРУЕМ ЧТО ТРЕК ЕСТЬ В БД (Важно для Foreign Key в cache/files)
+                track_data = {
+                    'id': track_id,
+                    'name': track_info['name'],
+                    'artist': track_info['artist'],
+                    'spotify_url': f"https://open.spotify.com/track/{track_id}",
+                    'image_url': track_info.get('image_url') or result.get('thumbnail')  # Spotify image или YouTube thumbnail
+                }
+                loop.run_until_complete(db.get_or_create_track(track_data))
+
+                # 2. ПРОВЕРЯЕМ ДУБЛИКАТЫ ПЕРЕД ЗАГРУЗКОЙ
+                existing_file = loop.run_until_complete(db.get_telegram_file(track_id))
+                if not existing_file:
+                    existing_file = loop.run_until_complete(db.get_telegram_file_by_name(track_info['artist'], track_info['name']))
+                
+                if existing_file:
+                    print(f"✅ Track already in Telegram Storage, skipping duplicate upload: {track_info['name']}")
+                    file_id = existing_file.file_id
+                else:
+                    # Загружаем в Telegram Storage
+                    print(f"📤 Auto-uploading web download to Telegram: {track_info['name']}")
+                    upload_result = get_telegram_storage().upload_file(file_path, f"🎵 {track_info['artist']} - {track_info['name']}")
+                    file_id = upload_result.get('file_id') if upload_result else None
+                
+                if file_id:
+                    # Сохраняем в кэш и в Discovery-таблицу
+                    loop.run_until_complete(db.update_track_cache(track_id, file_id, file_format, quality))
+                    loop.run_until_complete(db.save_telegram_file(
+                        track_id=track_id, 
+                        file_id=file_id, 
+                        artist=track_info['artist'], 
+                        track_name=track_info['name'], 
+                        file_size=result.get('file_size', 0),
+                        file_path=file_id # Используем file_id как путь для совместимости
+                    ))
+            except Exception as reg_e:
+                print(f"⚠️ Warning: Registration in discovery failed: {reg_e}")
+
+            loop.close()
+            return send_file(
+                file_path,
+                as_attachment=True,
+                download_name=f"{track_info['artist']} - {track_info['name']}.{file_format}"
+            )
+        else:
+            error_msg = result.get('error') if result else "Unknown error"
+            if 'loop' in locals() and not loop.is_closed():
+                loop.close()
+            return jsonify({'error': f"Download failed: {error_msg}"}), 500
+    
+    except Exception as e:
+        if 'loop' in locals() and not loop.is_closed():
+            loop.close()
+        print(f"❌ Download error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+# Временное хранилище токенов (в идеале использовать Redis или общую таблицу в БД)
+# Но для простоты пока будем использовать глобальную переменную, 
+# так как бот и веб работают в разных процессах, нам нужно общее хранилище.
+# ОБНОВЛЕНИЕ: Лучше использовать таблицу в БД для синхронизации между процессами.
+
+@app.route('/api/auth', methods=['POST'])
+def authenticate():
+    """Верификация токена из Telegram"""
+    try:
+        data = request.json
+        token = data.get('token')
+        
+        if not token:
+            return jsonify({'error': 'Token is required'}), 400
+            
+        # Проверяем токен в БД
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        user = loop.run_until_complete(db.verify_auth_token(token))
+        loop.close()
+        
+        if user:
+            return jsonify({
+                'success': True,
+                'user': {
+                    'id': user.id,
+                    'username': user.username or 'User',
+                    'first_name': user.first_name,
+                    'last_name': user.last_name
+                }
+            })
+        else:
+            return jsonify({'error': 'Invalid or expired token'}), 401
+    except Exception as e:
+        print(f"❌ Auth error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/playlists', methods=['GET', 'POST'])
+def handle_playlists():
+    """Работа с плейлистами"""
+    try:
+        user_id = request.headers.get('X-User-ID')
+        if not user_id:
+            return jsonify({'error': 'Unauthorized'}), 401
+            
+        user_id = int(user_id)
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+            
+        if request.method == 'GET':
+            # Получить список плейлистов
+            playlists_db = loop.run_until_complete(db.get_user_playlists(user_id))
+            
+            result = []
+            for pl in playlists_db:
+                # Получаем количество треков
+                count = loop.run_until_complete(db.get_playlist_track_count(pl.id))
+                result.append({
+                    'id': pl.id,
+                    'name': pl.name,
+                    'description': pl.description,
+                    'track_count': count
+                })
+            
+            loop.close()
+            return jsonify({'playlists': result})
+            
+        elif request.method == 'POST':
+            # Создать новый плейлист
+            data = request.json
+            name = data.get('name')
+            description = data.get('description', '')
+            
+            if not name:
+                return jsonify({'error': 'Name is required'}), 400
+                
+            playlist = loop.run_until_complete(db.create_playlist(user_id, name, description))
+            loop.close()
+            
+            # Trigger immediate backup
+            try:
+                backup_service = get_backup_service()
+                # Run sync in separate thread/loop or just wait? 
+                # Since this is a simple Flask app without Celery/Redis, we can run it synchronously 
+                # or create a new loop just for this.
+                # However, backup_to_telegram is async.
+                
+                # Re-using a new loop for backup
+                backup_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(backup_loop)
+                backup_loop.run_until_complete(backup_service.backup_to_telegram())
+                backup_loop.close()
+            except Exception as e:
+                print(f"⚠️ Backup trigger failed: {e}")
+
+            return jsonify({
+                'id': playlist.id,
+                'name': playlist.name,
+                'description': playlist.description
+            })
+            
+    except Exception as e:
+        print(f"❌ Playlists API error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/playlists/add_track', methods=['POST'])
+def add_track_to_playlist():
+    """Добавить трек в плейлист"""
+    try:
+        user_id = request.headers.get('X-User-ID')
+        if not user_id:
+            return jsonify({'error': 'Unauthorized'}), 401
+            
+        data = request.json
+        playlist_id = data.get('playlist_id')
+        track_data = data.get('track')
+        
+        if not playlist_id or not track_data:
+            return jsonify({'error': 'Missing required data'}), 400
+            
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # 1. Получаем/создаем трек в БД
+        # Генерируем стабильный ID на основе названия и исполнителя
+        import hashlib
+        track_id = track_data.get('id')
+        if not track_id or track_id.startswith('web_'):
+            # Создаем уникальный ID на основе исполнителя и названия
+            unique_string = f"{track_data.get('artist', '')}_{track_data.get('name', '')}".lower()
+            track_id = f"web_{hashlib.md5(unique_string.encode()).hexdigest()[:16]}"
+        
+        track = loop.run_until_complete(db.get_or_create_track({
+            'id': track_id,
+            'name': track_data.get('name'),
+            'artist': track_data.get('artist'),
+            'album': track_data.get('album'),
+            'image_url': track_data.get('image'),
+            'spotify_url': track_data.get('spotify_url', '')
+        }))
+        
+        # 2. Добавляем в плейлист
+        success = loop.run_until_complete(db.add_track_to_playlist(playlist_id, track.id))
+        loop.close()
+        
+        if success:
+            # Trigger immediate backup
+            try:
+                backup_service = get_backup_service()
+                backup_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(backup_loop)
+                backup_loop.run_until_complete(backup_service.backup_to_telegram())
+                backup_loop.close()
+            except Exception as e:
+                print(f"⚠️ Backup trigger failed: {e}")
+
+            return jsonify({'success': True})
+        else:
+            return jsonify({'error': 'Track already in playlist'}), 400
+            
+    except Exception as e:
+        print(f"❌ Add track error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/playlists/<int:playlist_id>/tracks', methods=['GET'])
+def get_playlist_tracks(playlist_id):
+    """Получить треки плейлиста"""
+    try:
+        user_id = request.headers.get('X-User-ID')
+        if not user_id:
+            return jsonify({'error': 'Unauthorized'}), 401
+            
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Получаем треки плейлиста
+        tracks = loop.run_until_complete(db.get_playlist_tracks(playlist_id))
+        loop.close()
+        
+        # Форматируем результат
+        result = []
+        for track in tracks:
+            result.append({
+                'id': track.id,
+                'name': track.name,
+                'artist': track.artist,
+                'album': track.album,
+                'duration': track.duration_ms // 1000 if track.duration_ms else 0,
+                'image': track.image_url,
+                'spotify_url': track.spotify_url
+            })
+        
+        return jsonify({'tracks': result})
+        
+    except Exception as e:
+        print(f"❌ Get playlist tracks error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/prepare-stream', methods=['POST'])
+def prepare_stream():
+    """Подготовить трек для стриминга через Telegram Storage"""
+    try:
+        data = request.json
+        artist = data.get('artist', '')
+        track_name = data.get('name', '')
+        track_id = data.get('id', '')
+        image_url = data.get('image') # Spotify image URL from search result
+        
+        if not artist or not track_name:
+            return jsonify({'error': 'Artist and track name required'}), 400
+        
+        # Генерируем уникальный track_id если не передан
+        if not track_id:
+            import hashlib
+            # Используем тот же алгоритм, что и в боте для консистентности
+            unique_string = f"{artist}_{track_name}".lower()
+            track_id = hashlib.md5(unique_string.encode()).hexdigest()[:16]
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # 1. Проверяем кеш в БД (ЛЮБОГО качества, чтобы не плодить дубликаты в канале)
+        # Сначала пробуем найти именно этот трек в Telegram Storage
+        telegram_file = loop.run_until_complete(db.get_telegram_file(track_id))
+        file_id = None
+        
+        if telegram_file:
+            file_id = telegram_file.file_id
+            print(f"✅ Found existing track in Storage by ID: {track_id}")
+        else:
+            # Пробуем по Имени/Артисту (предотвращает "невидимые" дубликаты)
+            telegram_file_by_name = loop.run_until_complete(db.get_telegram_file_by_name(artist, track_name))
+            if telegram_file_by_name:
+                file_id = telegram_file_by_name.file_id
+                print(f"✅ Found existing track in Storage by name: {artist} - {track_name}")
+            else:
+                # В последнюю очередь смотрим старый кэш (любое качество)
+                # Перебираем качества от лучшего к худшему
+                for q in ['320', '192', '128', 'FLAC']:
+                    file_id = loop.run_until_complete(db.get_cached_file_id(track_id, quality=q))
+                    if file_id: break
+        
+        if file_id:
+            # Файл уже в Telegram!
+            print(f"✅ Found in cache: {track_id}")
+            
+            # Получаем прямую ссылку из Telegram
+            file_url = get_telegram_storage().get_file_url(file_id)
+            
+            if file_url:
+                loop.close()
+                return jsonify({
+                    'success': True,
+                    'stream_url': file_url,
+                    'cached': True,
+                    'title': f"{artist} - {track_name}"
+                })
+        
+        # 2. Файла нет в кеше - скачиваем
+        print(f"📥 Downloading: {artist} - {track_name}")
+        result = loop.run_until_complete(
+            download_service.search_and_download(
+                artist,
+                track_name,
+                '192',  # Среднее качество для стриминга
+                'mp3'
+            )
+        )
+        
+        if not result or result.get('error'):
+            error_msg = result.get('error') if result else "Unknown download error"
+            print(f"❌ Download failed details: {error_msg}")
+            loop.close()
+            return jsonify({'error': f"Download failed: {error_msg}"}), 500
+            
+        if not result.get('file_path') or not os.path.exists(result['file_path']):
+            print(f"❌ File not found after download: {result.get('file_path')}")
+            loop.close()
+            return jsonify({'error': 'File not found after download'}), 500
+        
+        file_path = result['file_path']
+        
+        # 3. Загружаем в Telegram Storage
+        print(f"📤 Uploading to Telegram Storage: {os.path.basename(file_path)}")
+        caption = f"🎵 {artist} - {track_name}"
+        upload_result = get_telegram_storage().upload_file(file_path, caption)
+        
+        if not upload_result or not upload_result.get('file_id'):
+            error_details = upload_result.get('error') if upload_result else "Unknown upload error"
+            print(f"❌ Failed to upload to Telegram Storage: {error_details}")
+            loop.close()
+            return jsonify({'error': f'Failed to upload to Telegram Storage: {error_details}'}), 500
+        
+        
+        # 4. Регистрируем трек в БД. Приоритет: Spotify image > YouTube thumbnail
+        final_image_url = image_url or result.get('thumbnail')
+        
+        track_data = {
+            'id': track_id,
+            'name': track_name,
+            'artist': artist,
+            'spotify_url': f"https://open.spotify.com/search/{artist} {track_name}",
+            'image_url': final_image_url
+        }
+        loop.run_until_complete(db.get_or_create_track(track_data))
+        
+        # 5. Сохраняем в обе таблицы кэша для максимальной совместимости
+        file_id = upload_result['file_id']
+        loop.run_until_complete(
+            db.update_track_cache(
+                track_id=track_id,
+                telegram_file_id=file_id,
+                file_format='mp3',
+                quality='192'
+            )
+        )
+        loop.run_until_complete(
+            db.save_telegram_file(
+                track_id=track_id,
+                file_id=file_id,
+                file_path=upload_result.get('file_path'),
+                file_size=upload_result.get('file_size'),
+                artist=artist,
+                track_name=track_name,
+                image_url=final_image_url
+            )
+        )
+        
+        # 6. Получаем прямую ссылку
+        file_url = get_telegram_storage().get_file_url(upload_result['file_id'])
+        
+        # 7. Очистка временного файла
+        try:
+            download_service.cleanup_file(file_path)
+        except:
+            pass
+            
+        loop.close()
+        
+        if file_url:
+            return jsonify({
+                'success': True,
+                'stream_url': file_url,
+                'cached': False,
+                'title': f"{artist} - {track_name}"
+            })
+        else:
+            return jsonify({'error': 'Failed to get stream URL after upload'}), 500
+            
+    except Exception as e:
+        print(f"❌ Prepare stream error: {e}")
+        import traceback
+        traceback.print_exc()
+        # Возвращаем детали ошибки для диагностики
+        return jsonify({
+            'error': f"Internal Server Error: {str(e)}",
+            'type': type(e).__name__
+        }), 500
+
+@app.route('/api/stream-file/<path:filename>')
+def stream_file(filename):
+    """Стримить скачанный файл (legacy, теперь используем Telegram)"""
+    try:
+        # Получаем абсолютный путь к файлу
+        file_path = os.path.join(download_service.download_dir, filename)
+        
+        if not os.path.exists(file_path):
+            return jsonify({'error': 'File not found'}), 404
+        
+        # Отправляем файл с поддержкой Range requests для HTML5 audio
+        return send_file(
+            file_path,
+            mimetype='audio/mpeg',
+            as_attachment=False,
+            conditional=True
+        )
+        
+    except Exception as e:
+        print(f"❌ Stream file error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/backup-db', methods=['POST'])
+def backup_database():
+    """Создать backup БД (вызывается при закрытии/обновлении страницы)"""
+    try:
+        backup_svc = get_backup_service()
+        
+        # Создаем backup асинхронно
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        success = loop.run_until_complete(backup_svc.backup_to_telegram())
+        loop.close()
+        
+        if success:
+            return jsonify({'success': True, 'message': 'Database backup created'})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to create backup'}), 500
+            
+    except Exception as e:
+        print(f"❌ Backup error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+if __name__ == '__main__':
+    # Инициализация БД перед запуском
+    
+    # Запуск сервера
+    port = int(os.environ.get('PORT', 5000))
+    print(f"🚀 Web App starting on port {port}...")
+    app.run(host='0.0.0.0', port=port, debug=False)

@@ -250,8 +250,13 @@ def main():
         # Игнорируем конфликты (когда другой процесс бота уже работает)
         if isinstance(error, Conflict):
             print(f"⚠️  [CONFLICT] Другой процесс бота уже работает. Завершаем текущий...", flush=True)
-            # Gracefully shutdown
-            await application.stop()
+            # Gracefully shutdown only if application is still running
+            if application.is_running:
+                try:
+                    await application.stop()
+                except RuntimeError:
+                    # Application is already stopping/stopped, just exit
+                    pass
             return
 
         # Логируем другие ошибки

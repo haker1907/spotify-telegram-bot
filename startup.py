@@ -107,10 +107,10 @@ def main():
         processes.append(web_process)
 
         # 2. Start Telegram Bot with delay to prevent Conflict (terminated by other getUpdates)
-        # Give Railway time to stop the old container
-        print("🤖 Starting Telegram Bot in 30 seconds to prevent conflicts...", flush=True)
+        # Give Railway time to stop the old container (increased to 60s for safety)
+        print("🤖 Starting Telegram Bot in 60 seconds to prevent conflicts...", flush=True)
         bot_process = subprocess.Popen(
-            [sys.executable, "-c", "import time; print('⏳ Waiting for old instances...', flush=True); time.sleep(30); import subprocess, sys; subprocess.run([sys.executable, 'bot.py'])"],
+            [sys.executable, "-c", "import time, sys; print('⏳ Waiting for old instances to shutdown...', flush=True); time.sleep(60); print('🚀 Starting bot now...', flush=True); import subprocess; subprocess.run([sys.executable, 'bot.py'])"],
             env=env,
             stdout=sys.stdout,
             stderr=sys.stderr

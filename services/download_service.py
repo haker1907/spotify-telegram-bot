@@ -409,24 +409,24 @@ class DownloadService:
                     'skip': ['translated_subs'],
                 }
             },
+            'nocheckcertificate': True,
+            'prefer_insecure': True,
             'socket_timeout': 30,
             'retries': 5,
             'geo_bypass': True,
-            'nocheckcertificate': True,
             'age_limit': 99,  # Обход возрастных ограничений
             'cookiefile': self.cookies_path if os.path.exists(self.cookies_path) else None,
         }
         
         try:
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None, 
-                self._download_sync, 
-                search_query, 
-                ydl_opts,
-                file_format
+            # ИСПОЛЬЗУЕМ РОТАЦИЮ, ЧТОБЫ БЫЛ ФОЛЛБЕК БЕЗ КУК!
+            return await self._download_with_rotation(
+                download_target=search_query, 
+                search_query=search_query, 
+                ydl_opts=ydl_opts, 
+                file_format=file_format,
+                youtube_url=None
             )
-            return result
         except Exception as e:
             print(f"❌ Ошибка скачивания {search_query}: {e}")
             return {'error': str(e)}

@@ -271,100 +271,100 @@ class DownloadService:
             return ydl.extract_info(query, download=False)
 
 
-def _download_sync(self, query: str, ydl_opts: dict, file_format: str = 'mp3') -> Optional[Dict]:
-    """Синхронное скачивание с предварительной проверкой доступных форматов"""
-    format_candidates = [
-        "bestaudio[ext=m4a]/bestaudio/best",
-        "bestaudio/best",
-        "best"
-    ]
+    def _download_sync(self, query: str, ydl_opts: dict, file_format: str = 'mp3') -> Optional[Dict]:
+        """Синхронное скачивание с предварительной проверкой доступных форматов"""
+        format_candidates = [
+            "bestaudio[ext=m4a]/bestaudio/best",
+            "bestaudio/best",
+            "best"
+        ]
 
-    last_error = None
+        last_error = None
 
-    try:
-        probe_opts = copy.deepcopy(ydl_opts)
-        probe_opts['skip_download'] = True
-        probe_opts['quiet'] = False
-        probe_opts['no_warnings'] = False
-
-        with yt_dlp.YoutubeDL(probe_opts) as ydl:
-            info = ydl.extract_info(query, download=False)
-
-        if not info:
-            return {'error': 'yt-dlp returned empty info'}
-
-        # Если это поиск
-        if 'entries' in info and info['entries']:
-            info = info['entries'][0]
-
-        formats = info.get('formats') or []
-        if not formats:
-            return {'error': 'No formats returned by extractor'}
-
-    except yt_dlp.utils.DownloadError as e:
-        return {'error': str(e).split('\n')[0]}
-    except Exception as e:
-        return {'error': f'Probe failed: {e}'}
-
-    for fmt in format_candidates:
         try:
-            current_opts = copy.deepcopy(ydl_opts)
-            current_opts['format'] = fmt
+            probe_opts = copy.deepcopy(ydl_opts)
+            probe_opts['skip_download'] = True
+            probe_opts['quiet'] = False
+            probe_opts['no_warnings'] = False
 
-            print(f"🎵 Trying format: {fmt}...")
+            with yt_dlp.YoutubeDL(probe_opts) as ydl:
+                info = ydl.extract_info(query, download=False)
 
-            with yt_dlp.YoutubeDL(current_opts) as ydl:
-                downloaded_info = ydl.extract_info(query, download=True)
+            if not info:
+                return {'error': 'yt-dlp returned empty info'}
 
-            if not downloaded_info:
-                continue
+            # Если это поиск
+            if 'entries' in info and info['entries']:
+                info = info['entries'][0]
 
-            if 'entries' in downloaded_info and downloaded_info['entries']:
-                downloaded_info = downloaded_info['entries'][0]
-
-            title = downloaded_info.get('title', 'Unknown')
-            duration = downloaded_info.get('duration', 0)
-
-            base_path = ydl.prepare_filename(downloaded_info)
-            file_path = os.path.splitext(base_path)[0] + f'.{file_format}'
-
-            if not os.path.exists(file_path):
-                actual_filename = downloaded_info.get('_filename')
-                if actual_filename:
-                    potential_path = os.path.splitext(actual_filename)[0] + f'.{file_format}'
-                    if os.path.exists(potential_path):
-                        file_path = potential_path
-
-            if not os.path.exists(file_path):
-                pattern = os.path.join(self.download_dir, f'*.{file_format}')
-                files = glob.glob(pattern)
-                now = time.time()
-                recent_files = [f for f in files if now - os.path.getctime(f) < 60]
-                if recent_files:
-                    file_path = max(recent_files, key=os.path.getctime)
-
-            if not os.path.exists(file_path):
-                return {'error': 'Download finished but output file not found'}
-
-            return {
-                'file_path': file_path,
-                'title': title,
-                'duration': duration,
-                'artist': downloaded_info.get('artist', ''),
-                'thumbnail': downloaded_info.get('thumbnail', ''),
-                'file_size': os.path.getsize(file_path)
-            }
+            formats = info.get('formats') or []
+            if not formats:
+                return {'error': 'No formats returned by extractor'}
 
         except yt_dlp.utils.DownloadError as e:
-            last_error = str(e).split('\n')[0]
-            print(f"⚠️ Format {fmt} failed: {last_error}")
-            continue
+            return {'error': str(e).split('\n')[0]}
         except Exception as e:
-            last_error = f"Unexpected error: {e}"
-            print(f"❌ Unexpected error in _download_sync: {e}")
-            break
+            return {'error': f'Probe failed: {e}'}
 
-    return {'error': last_error or 'All format candidates failed'}
+        for fmt in format_candidates:
+            try:
+                current_opts = copy.deepcopy(ydl_opts)
+                current_opts['format'] = fmt
+
+                print(f"🎵 Trying format: {fmt}...")
+
+                with yt_dlp.YoutubeDL(current_opts) as ydl:
+                    downloaded_info = ydl.extract_info(query, download=True)
+
+                if not downloaded_info:
+                    continue
+
+                if 'entries' in downloaded_info and downloaded_info['entries']:
+                    downloaded_info = downloaded_info['entries'][0]
+
+                title = downloaded_info.get('title', 'Unknown')
+                duration = downloaded_info.get('duration', 0)
+
+                base_path = ydl.prepare_filename(downloaded_info)
+                file_path = os.path.splitext(base_path)[0] + f'.{file_format}'
+
+                if not os.path.exists(file_path):
+                    actual_filename = downloaded_info.get('_filename')
+                    if actual_filename:
+                        potential_path = os.path.splitext(actual_filename)[0] + f'.{file_format}'
+                        if os.path.exists(potential_path):
+                            file_path = potential_path
+
+                if not os.path.exists(file_path):
+                    pattern = os.path.join(self.download_dir, f'*.{file_format}')
+                    files = glob.glob(pattern)
+                    now = time.time()
+                    recent_files = [f for f in files if now - os.path.getctime(f) < 60]
+                    if recent_files:
+                        file_path = max(recent_files, key=os.path.getctime)
+
+                if not os.path.exists(file_path):
+                    return {'error': 'Download finished but output file not found'}
+
+                return {
+                    'file_path': file_path,
+                    'title': title,
+                    'duration': duration,
+                    'artist': downloaded_info.get('artist', ''),
+                    'thumbnail': downloaded_info.get('thumbnail', ''),
+                    'file_size': os.path.getsize(file_path)
+                }
+
+            except yt_dlp.utils.DownloadError as e:
+                last_error = str(e).split('\n')[0]
+                print(f"⚠️ Format {fmt} failed: {last_error}")
+                continue
+            except Exception as e:
+                last_error = f"Unexpected error: {e}"
+                print(f"❌ Unexpected error in _download_sync: {e}")
+                break
+
+        return {'error': last_error or 'All format candidates failed'}
     
     async def search_and_download_by_query(self, search_query: str, quality: str = '192', file_format: str = 'mp3') -> Optional[Dict]:
         ffmpeg_args = self._get_ffmpeg_args(quality, file_format)

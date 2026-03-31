@@ -1,32 +1,50 @@
-import asyncio
 import os
+import asyncio
 import sys
 
-# Add the project root to sys.path
+# Добавляем текущую директорию в путь для импорта
 sys.path.append(os.getcwd())
+
+# Mock TELEGRAM_BOT_TOKEN for config
+os.environ['TELEGRAM_BOT_TOKEN'] = '123:mock'
 
 from services.download_service import DownloadService
 
-async def main():
+async def test_robust_download():
     service = DownloadService()
-    # Изначально проблемные треки:
-    # 1. wHlAnhkLUvw (Dame Un Grrr)
-    # 2. Tdt79d2BaoI (SAD ABOUT FUNK)
-    # 3. OuG2g6n68-E (NO BALANCAR)
-    target_url = "https://www.youtube.com/watch?v=OuG2g6n68-E"
-    quality = "320"
-    file_format = "mp3"
     
-    print(f"🧪 Testing download for: {target_url}")
-    # Используем новый метод для прямой загрузки по URL
-    result = await service.download_from_url(target_url, quality, file_format)
+    # Видео ID, который вызывал ошибку (Linkin Park - Numb)
+    video_url = "https://www.youtube.com/watch?v=VK3SIu2_fdc"
+    
+    print(f"🧪 Testing robust download for: {video_url}")
+    
+    # Прямой вызов download_from_url
+    result = await service.download_from_url(
+        video_url, 
+        quality='192', 
+        file_format='mp3', 
+        artist='Linkin Park', 
+        track_name='Numb'
+    )
     
     if result and 'file_path' in result:
-        print(f"✅ Success! File downloaded to: {result['file_path']}")
+        print(f"✅ SUCCESS: File downloaded to {result['file_path']}")
+        print(f"📊 Title: {result['title']}")
+        print(f"⚖️ Size: {result.get('file_size', 0)} bytes")
+        
+        # Cleanup
         if os.path.exists(result['file_path']):
-            print(f"📂 File verified on disk. Size: {os.path.getsize(result['file_path'])} bytes")
+            os.remove(result['file_path'])
+            print(f"🗑️ Cleaned up test file.")
+        return True
     else:
-        print(f"❌ Download failed: {result.get('error') if result else 'Unknown error'}")
+        print(f"❌ FAILURE: Download failed!")
+        print(f"📝 Error: {result.get('error', 'Unknown error')}")
+        return False
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    loop = asyncio.get_event_loop()
+    if loop.run_until_complete(test_robust_download()):
+        sys.exit(0)
+    else:
+        sys.exit(1)

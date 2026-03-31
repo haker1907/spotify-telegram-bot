@@ -136,7 +136,7 @@ class DownloadService:
             'extractor_args': {
                 'youtube': {
                     'player_client': ['web_music', 'mweb'],
-                    'skip': ['translated_subs'],
+                    'skip': ['translated_subs', 'hls', 'dash'],
                 }
             },
             'http_headers': {
@@ -282,69 +282,101 @@ class DownloadService:
             return ydl.extract_info(query, download=False)
 
     def _download_sync(self, query: str, ydl_opts: dict, file_format: str = 'mp3') -> Optional[Dict]:
-        """Синхронное скачивание (для запуска в executor)"""
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(query, download=True)
+        """Синхронное скачивание (с поддержкой фоллбэка форматов)"""
+        # Список форматов для попыток скачивания
+        format_candidates = [
+            # 1. Сначала пробуем M4A (лучшее для сжатия)
+            "bestaudio[ext=m4a]",
+            # 2. Любое аудио
+            "bestaudio",
+            # 3. Самое лучшее (даже если с видео, FFmpeg потом достанет звук)
+            "best"
+        ]
+        
+        last_error = None
+        
+        for fmt in format_candidates:
+            try:
+                # Обновляем формат для текущей попытки
+                current_opts = ydl_opts.copy()
+                current_opts['format'] = fmt
                 
-                if not info:
-                    return None
+                print(f"🎵 Trying format: {fmt}...")
                 
-                title = info.get('title', 'Unknown')
-                duration = info.get('duration', 0)
-                
-                import glob
-                import time
-                
-                # 1. Пробуем предсказанный путь
-                base_path = ydl.prepare_filename(info)
-                file_path = os.path.splitext(base_path)[0] + f'.{file_format}'
-                
-                # 2. Если не найден, пробуем путь из метаданных yt-dlp
-                if not os.path.exists(file_path):
-                    actual_filename = info.get('_filename')
-                    if actual_filename:
-                        potential_path = os.path.splitext(actual_filename)[0] + f'.{file_format}'
-                        if os.path.exists(potential_path):
-                            file_path = potential_path
-                
-                # 3. Если всё еще не найден (самый надежный способ для сложных имен), 
-                # ищем файл с нужным форматом, созданный в последние 60 секунд
-                if not os.path.exists(file_path):
-                    pattern = os.path.join(self.download_dir, f'*.{file_format}')
-                    files = glob.glob(pattern)
-                    now = time.time()
-                    # Берем те, что созданы недавно
-                    recent_files = [f for f in files if now - os.path.getctime(f) < 60]
-                    if recent_files:
-                        # Берем самый новый из недавних
-                        file_path = max(recent_files, key=os.path.getctime)
-                
-                # 4. Проверяем финальный путь
-                file_size = 0
-                if os.path.exists(file_path):
-                    file_size = os.path.getsize(file_path)
-                else:
-                    # Логируем неудачу для отладки
-                    print(f"⚠️ Файл не найден после всех попыток: {file_path}")
-                    # Попробуем взять просто самый последний файл этого формата (крайняя мера)
-                    pattern = os.path.join(self.download_dir, f'*.{file_format}')
-                    all_files = glob.glob(pattern)
-                    if all_files:
-                        file_path = max(all_files, key=os.path.getctime)
+                with yt_dlp.YoutubeDL(current_opts) as ydl:
+                    info = ydl.extract_info(query, download=True)
+                    
+                    if not info:
+                        continue
+                    
+                    title = info.get('title', 'Unknown')
+                    duration = info.get('duration', 0)
+                    
+                    import glob
+                    import time
+                    
+                    # 1. Пробуем предсказанный путь
+                    base_path = ydl.prepare_filename(info)
+                    file_path = os.path.splitext(base_path)[0] + f'.{file_format}'
+                    
+                    # 2. Если не найден, пробуем путь из метаданных yt-dlp
+                    if not os.path.exists(file_path):
+                        actual_filename = info.get('_filename')
+                        if actual_filename:
+                            potential_path = os.path.splitext(actual_filename)[0] + f'.{file_format}'
+                            if os.path.exists(potential_path):
+                                file_path = potential_path
+                    
+                    # 3. Если всё еще не найден (самый надежный способ для сложных имен), 
+                    # ищем файл с нужным форматом, созданный в последние 60 секунд
+                    if not os.path.exists(file_path):
+                        pattern = os.path.join(self.download_dir, f'*.{file_format}')
+                        files = glob.glob(pattern)
+                        now = time.time()
+                        recent_files = [f for f in files if now - os.path.getctime(f) < 60]
+                        if recent_files:
+                            file_path = max(recent_files, key=os.path.getctime)
+                    
+                    file_size = 0
+                    if os.path.exists(file_path):
                         file_size = os.path.getsize(file_path)
+                    else:
+                        print(f"⚠️ Файл не найден после всех попыток: {file_path}")
+                        pattern = os.path.join(self.download_dir, f'*.{file_format}')
+                        all_files = glob.glob(pattern)
+                        if all_files:
+                            file_path = max(all_files, key=os.path.getctime)
+                            file_size = os.path.getsize(file_path)
+                    
+                    # Если скачали успешно - возвращаем результат
+                    print(f"✅ Download successful with format: {fmt}")
+                    return {
+                        'file_path': file_path,
+                        'title': title,
+                        'duration': duration,
+                        'artist': info.get('artist', ''),
+                        'thumbnail': info.get('thumbnail', ''),
+                        'file_size': file_size
+                    }
+                    
+            except yt_dlp.utils.DownloadError as e:
+                last_error = e
+                error_msg = str(e).split('\n')[0]
+                print(f"⚠️ Format {fmt} failed: {error_msg}")
+                # Если это бан или блокировка, нет смысла пробовать другие форматы в этой итерации
+                if any(msg in error_msg.lower() for msg in ["block", "not available", "forbidden", "403"]):
+                    if "requested format is not available" in error_msg.lower():
+                        continue # Пробуем следующий формат
+                    else:
+                        break # Попали под бан, выходим из цикла форматов
+            except Exception as e:
+                last_error = e
+                print(f"❌ Unexpected error in _download_sync: {e}")
+                break
                 
-                return {
-                    'file_path': file_path,
-                    'title': title,
-                    'duration': duration,
-                    'artist': info.get('artist', ''),
-                    'thumbnail': info.get('thumbnail', ''),
-                    'file_size': file_size
-                }
-        except Exception as e:
-            print(f"❌ Ошибка в _download_sync: {e}")
-            return {'error': str(e)}
+        error_msg = str(last_error) if last_error else "All formats failed"
+        print(f"❌ Failed all format candidates for {query}: {error_msg}")
+        return {'error': error_msg}
 
     
     async def search_and_download_by_query(self, search_query: str, quality: str = '192', file_format: str = 'mp3') -> Optional[Dict]:

@@ -135,13 +135,16 @@ class DownloadService:
             'default_search': 'ytsearch1',
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['web_music', 'mweb'],
+                    'player_client': ['android', 'ios'],
                     'skip': ['translated_subs', 'hls', 'dash'],
                 }
             },
+            'nocheckcertificate': True,
+            'prefer_insecure': True,
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
             },
             'referer': 'https://www.google.com/',
             'noproxy': True,
@@ -182,7 +185,7 @@ class DownloadService:
                 "sign in to confirm", "confirm you're not a bot"
             ])
 
-        # Попытка 1: Мобильные клиенты (самые стойкие к блокировкам)
+        # Попытка 1: Мобильные клиенты (Native Android/iOS)
         print(f"🚀 Attempt 1: Using Android & iOS clients...")
         ydl_opts['extractor_args']['youtube']['player_client'] = ['android', 'ios']
         result = await loop.run_in_executor(None, self._download_sync, download_target, ydl_opts, file_format)
@@ -194,32 +197,29 @@ class DownloadService:
             result = await loop.run_in_executor(None, self._download_sync, download_target, ydl_opts, file_format)
             
             if is_blocked(result):
-                # Попытка 3: Мобильные (No Cookies)
-                print(f"⚠️ Attempt 2 failed. Trying Attempt 3: Android/iOS (No Cookies)...")
-                ydl_opts['extractor_args']['youtube']['player_client'] = ['android', 'ios']
-                orig_cookies = ydl_opts.get('cookiefile')
-                ydl_opts['cookiefile'] = None
-                result = await loop.run_in_executor(None, self._download_sync, download_target, ydl_opts, file_format)
-                ydl_opts['cookiefile'] = orig_cookies
-            
-            if is_blocked(result):
-                # Попытка 3: Встроенные плееры
-                print(f"⚠️ Attempt 2 failed. Trying Attempt 3: Embedded only...")
+                # Попытка 3: Встроенные плееры (Embedded)
+                print(f"⚠️ Attempt 2 failed. Trying Attempt 3: Embedded...")
                 ydl_opts['extractor_args']['youtube']['player_client'] = ['web_embedded']
                 result = await loop.run_in_executor(None, self._download_sync, download_target, ydl_opts, file_format)
                 
                 if is_blocked(result):
-                    # Попытка 4: Стандартный веб
+                    # Попытка 4: Стандартный веб (Desktop Web)
                     print(f"⚠️ Attempt 3 failed. Trying Attempt 4: Standard Web...")
                     ydl_opts['extractor_args']['youtube']['player_client'] = ['web']
                     result = await loop.run_in_executor(None, self._download_sync, download_target, ydl_opts, file_format)
 
-        # ФИНАЛЬНЫЙ FALLBACK: Поиск альтернатив
+        # ФИНАЛЬНЫЙ FALLBACK: Поиск без кук (No Cookies)
+        if is_blocked(result):
+            print(f"🔄 All clients with cookies failed. Trying without cookies (No Cookies)...")
+            ydl_opts['cookiefile'] = None
+            ydl_opts['extractor_args']['youtube']['player_client'] = ['android', 'ios']
+            result = await loop.run_in_executor(None, self._download_sync, download_target, ydl_opts, file_format)
+            ydl_opts['cookiefile'] = self.cookies_path if os.path.exists(self.cookies_path) else None
+            
         if is_blocked(result) and youtube_url:
-            print(f"🔄 Specific URL failed. Falling back to Search for alternatives...")
+            print(f"🔄 Specific URL failed even without cookies. Search for alternatives...")
             ydl_opts['default_search'] = 'ytsearch1'
-            ydl_opts['extractor_args']['youtube']['player_client'] = ['ios', 'android', 'web_music']
-            ydl_opts['format'] = 'bestaudio/best' # Reset to most flexible
+            ydl_opts['format'] = 'best' # Most flexible for search
             result = await loop.run_in_executor(None, self._download_sync, search_query, ydl_opts, file_format)
         
         return result

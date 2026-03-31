@@ -186,6 +186,7 @@ def main():
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel_playlist_creation)],
+        per_message=True,
     )
     application.add_handler(create_playlist_conv)
     

@@ -182,6 +182,13 @@ class SpotifyService:
                 }
                 
                 response = await client.get(api_url, params=params, timeout=10.0)
+                if response.status_code == 429:
+                    print("⚠️ Search API Rate Limited (429). Retrying with new token...")
+                    token = await self._get_anonymous_token()
+                    if token:
+                        headers["Authorization"] = f"Bearer {token}"
+                        response = await client.get(api_url, params=params, timeout=10.0)
+                
                 if response.status_code != 200:
                     print(f"⚠️ Search API Error: {response.status_code} {response.text}")
                     return []

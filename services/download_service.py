@@ -166,7 +166,7 @@ class DownloadService:
         out_tmpl = os.path.join(self.download_dir, f"{safe_name}_{quality}.%(ext)s")
         
         return {
-            'format': 'bestaudio/best',
+            'format': 'bestaudio[ext=m4a]/bestaudio/best',
             'js_runtimes': {'node': {}},
             'remote_components': 'ejs:github',
             'outtmpl': out_tmpl,
@@ -260,6 +260,7 @@ class DownloadService:
             print(f"🔄 Specific URL failed. Falling back to Search for alternatives...")
             ydl_opts['default_search'] = 'ytsearch1'
             ydl_opts['extractor_args']['youtube']['player_client'] = ['ios', 'android', 'web_music']
+            ydl_opts['format'] = 'bestaudio/best' # Reset to most flexible
             result = await loop.run_in_executor(None, self._download_sync, search_query, ydl_opts, file_format)
         
         return result

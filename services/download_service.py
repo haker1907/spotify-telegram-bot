@@ -484,6 +484,35 @@ class DownloadService:
             
         return None
     
+    def _is_blocked(self, result: Optional[Dict]) -> bool:
+        """Проверить заблокирована ли попытка скачивания"""
+        if not result:
+            return True
+        if 'error' in result:
+            error = result['error'].lower()
+            # Проверяем на типичные ошибки блокировки YouTube
+            blocked_keywords = [
+                'sign in',
+                'bot',
+                'challenge',
+                'verify',
+                'format is not available',
+                'no formats',
+                'requested format is not available'
+            ]
+            return any(keyword in error for keyword in blocked_keywords)
+        return False
+
+    def _should_try_search(self, result: Optional[Dict]) -> bool:
+        """Проверить нужно ли пробовать поиск вместо прямой ссылки"""
+        if not result:
+            return True
+        if 'error' in result:
+            error = result['error'].lower()
+            # Если ошибка связана с форматом или недоступностью трека
+            return 'format' in error or 'not found' in error or 'available' in error
+        return False
+
     def cleanup_file(self, file_path: str):
         """Удалить скачанный файл"""
         try:

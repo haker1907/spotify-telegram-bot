@@ -18,17 +18,35 @@ class DatabaseManager:
     
     def __init__(self, database_url: str = None):
         self.database_url = database_url or config.DATABASE_URL
+
+        # Диагностика пути к БД и создание файла если нужно
+        db_path = self.database_url.replace('sqlite+aiosqlite:///', '').replace('sqlite:///', '')
+        db_abs_path = os.path.abspath(db_path)
+
+        # Убедимся что директория существует
+        db_dir = os.path.dirname(db_abs_path)
+        if db_dir and not os.path.exists(db_dir):
+            os.makedirs(db_dir, exist_ok=True)
+            print(f"📁 Created database directory: {db_dir}", flush=True)
+
+        # Создадим файл БД если его еще нет (простой touch)
+        if not os.path.exists(db_abs_path):
+            try:
+                # Создаем пустой файл чтобы SQLite мог его открыть
+                open(db_abs_path, 'a').close()
+                print(f"📄 Created empty database file: {db_abs_path}", flush=True)
+            except Exception as e:
+                print(f"⚠️  Could not pre-create database file: {e}", flush=True)
+
         # Добавляем таймаут для SQLite чтобы избежать "database is locked" в многопроцессной среде
         connect_args = {"timeout": 20} if "sqlite" in self.database_url else {}
         self.engine = create_async_engine(
-            self.database_url, 
+            self.database_url,
             echo=False,
             connect_args=connect_args
         )
-        
-        # Диагностика пути к БД
-        db_path = self.database_url.replace('sqlite+aiosqlite:///', '').replace('sqlite:///', '')
-        print(f"🔍 [DB] Using database at: {os.path.abspath(db_path)} (Size: {os.path.getsize(db_path) if os.path.exists(db_path) else 'NOT FOUND'})", flush=True)
+
+        print(f"🔍 [DB] Using database at: {db_abs_path} (Size: {os.path.getsize(db_abs_path) if os.path.exists(db_abs_path) else 'NOT FOUND'} bytes)", flush=True)
         
         # Включаем Foreign Keys на уровне драйвера SQLite для КАЖДОГО соединения
         if "sqlite" in self.database_url:

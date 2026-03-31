@@ -135,7 +135,6 @@ class DownloadService:
             'default_search': 'ytsearch1',
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'ios'],
                     'skip': ['translated_subs'],
                 }
             },
@@ -185,9 +184,10 @@ class DownloadService:
                 "sign in to confirm", "confirm you're not a bot"
             ])
 
-        # Попытка 1: Мобильные клиенты (Native Android/iOS)
-        print(f"🚀 Attempt 1: Using Android & iOS clients...")
-        ydl_opts['extractor_args']['youtube']['player_client'] = ['android', 'ios']
+        # Попытка 1: Стандартные клиенты yt-dlp (Без переопределения)
+        # yt-dlp сам знает, какие клиенты работают лучше всего для избегания ошибок PO Token
+        print(f"🚀 Attempt 1: Using Default yt-dlp clients...")
+        ydl_opts['extractor_args']['youtube']['player_client'] = ['default']
         result = await loop.run_in_executor(None, self._download_sync, download_target, ydl_opts, file_format)
 
         if is_blocked(result):
@@ -212,7 +212,7 @@ class DownloadService:
         if is_blocked(result):
             print(f"🔄 All clients with cookies failed. Trying without cookies (No Cookies)...")
             ydl_opts['cookiefile'] = None
-            ydl_opts['extractor_args']['youtube']['player_client'] = ['android', 'ios']
+            ydl_opts['extractor_args']['youtube']['player_client'] = ['default']
             result = await loop.run_in_executor(None, self._download_sync, download_target, ydl_opts, file_format)
             ydl_opts['cookiefile'] = self.cookies_path if os.path.exists(self.cookies_path) else None
             
@@ -406,7 +406,6 @@ class DownloadService:
             # Удаляем жесткий user_agent для автоматического подбора под клиента
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android'],
                     'skip': ['translated_subs'],
                 }
             },

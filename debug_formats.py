@@ -2,22 +2,26 @@ import os
 import sys
 import asyncio
 sys.path.append(os.getcwd())
-from services.download_service import DownloadService
 import yt_dlp
 
 async def debug_options():
-    ds = DownloadService()
     url = "https://www.youtube.com/watch?v=4m9Ql32tgbw"
-    ydl_opts = ds._get_base_ydl_opts("DJ Tchouzen", "Nulteex", "192", "mp3", [])
     
-    print("YT-DLP OPTIONS BEING USED:")
-    import pprint
-    pprint.pprint(ydl_opts)
+    # Let's try what test_format2.py had exactly plus format: bestaudio/best
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'quiet': False,
+        'extractor_args': {
+            'youtube': {
+                # Notice we completely omit 'player_client'
+                'skip': ['translated_subs'],
+            }
+        },
+    }
     
-    # Try getting formats directly with these exact options
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            print(f"\nExtracting info for {url} ...")
+            print(f"\n[Test 1] Extracting info for {url} WITHOUT cookies or player_client...")
             info = ydl.extract_info(url, download=False)
             print("\nSUCCESS! Formats found:")
             if info and 'formats' in info:
@@ -26,8 +30,22 @@ async def debug_options():
             print("\nBEST AUDIO FORMAT:", info.get('format_id'))
     except yt_dlp.utils.DownloadError as e:
         print(f"\nDOWNLOAD ERROR: {e}")
-    except Exception as e:
-        print(f"\nERROR: {e}")
+        
+    print("\n-------------------------------\n")
+        
+    # Test 2: With cookies
+    ydl_opts['cookiefile'] = os.path.join(os.getcwd(), 'cookies.txt')
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            print(f"\n[Test 2] Extracting info for {url} WITH cookies...")
+            info = ydl.extract_info(url, download=False)
+            print("\nSUCCESS! Formats found:")
+            if info and 'formats' in info:
+                for f in info['formats']:
+                    print(f.get('format_id', ''), f.get('ext', ''), f.get('acodec', ''), f.get('vcodec', ''))
+            print("\nBEST AUDIO FORMAT:", info.get('format_id'))
+    except yt_dlp.utils.DownloadError as e:
+        print(f"\nDOWNLOAD ERROR: {e}")
 
 if __name__ == "__main__":
     asyncio.run(debug_options())

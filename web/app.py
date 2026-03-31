@@ -127,8 +127,9 @@ def health_check():
 
 @app.route('/')
 def index():
-    """Главная страница"""
-    return render_template('index.html')
+    """Главная страница с поддержкой авторизации через параметр auth"""
+    auth_token = request.args.get('auth')
+    return render_template('index.html', auth_token=auth_token)
 
 @app.route('/api/sync/deep', methods=['POST'])
 def sync_deep():

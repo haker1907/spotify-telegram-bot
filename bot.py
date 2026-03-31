@@ -186,7 +186,6 @@ def main():
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel_playlist_creation)],
-        per_message=True,
     )
     application.add_handler(create_playlist_conv)
     
@@ -240,8 +239,28 @@ def main():
     # Общий обработчик callback'ов (для остальных)
     application.add_handler(CallbackQueryHandler(handle_callback))
     
+    # ========== ERROR HANDLER ==========
+
+    async def error_handler(update: Update, context):
+        """Обработчик ошибок бота"""
+        from telegram.error import Conflict
+
+        error = context.error
+
+        # Игнорируем конфликты (когда другой процесс бота уже работает)
+        if isinstance(error, Conflict):
+            print(f"⚠️  [CONFLICT] Другой процесс бота уже работает. Завершаем текущий...", flush=True)
+            # Gracefully shutdown
+            await application.stop()
+            return
+
+        # Логируем другие ошибки
+        logger.warning(f'Update {update} caused error {error}')
+
+    application.add_error_handler(error_handler)
+
     # ========== ЗАПУСК БОТА ==========
-    
+
     print(f"""
 ✅ Бот запущен и готов к работе!
 
@@ -253,7 +272,7 @@ def main():
 
 💡 Используйте Ctrl+C для остановки
 """)
-    
+
     # Запускаем polling
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 

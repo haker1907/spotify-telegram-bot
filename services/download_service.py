@@ -136,7 +136,7 @@ class DownloadService:
             'extractor_args': {
                 'youtube': {
                     'player_client': ['android', 'ios'],
-                    'skip': ['translated_subs', 'hls', 'dash'],
+                    'skip': ['translated_subs'],
                 }
             },
             'nocheckcertificate': True,
@@ -407,9 +407,7 @@ class DownloadService:
             'extractor_args': {
                 'youtube': {
                     'player_client': ['android'],
-                    'skip': ['hls', 'dash', 'translated_subs'],
-                    'include_dash_manifest': False,
-                    'include_hls_manifest': False,
+                    'skip': ['translated_subs'],
                 }
             },
             'socket_timeout': 30,

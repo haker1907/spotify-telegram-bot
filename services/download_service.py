@@ -37,69 +37,21 @@ class DownloadService:
                 print(f"📦 Attempting to restore cookies from YOUTUBE_COOKIES_BASE64...")
                 cookies_content = base64.b64decode(cookies_env).decode('utf-8')
                 
-                # Список известных ключей YouTube для "умного" разделения
-                yt_keys = [
-                    '__Secure-1PSIDTS', '__Secure-3PSIDTS', '__Secure-1PSIDCC', '__Secure-3PSIDCC',
-                    '__Secure-1PSID', '__Secure-3PSID', '__Secure-1PAPISID', '__Secure-3PAPISID',
-                    'HSID', 'SSID', 'APISID', 'SAPISID', 'SID', 'LOGIN_INFO', 'SIDCC', 'YSC', 
-                    'VISITOR_INFO1_LIVE', 'PREF', 'GPS'
-                ]
-
-                sanitized_lines = []
-                for line in cookies_content.splitlines():
-                    if not line.strip():
-                        continue
-                    
-                    # Заменяем подозрительные символы на табы (включая непечатаемые)
-                    clean_line = "".join([c if (c == '\t' or (ord(c) >= 32 and ord(c) < 127)) else '\t' for c in line])
-                    
-                    if clean_line.startswith('.'):
-                        # Сначала убираем лишние табы (схлапываем в один)
-                        parts = [p.strip() for p in clean_line.split('\t') if p.strip()]
-                        
-                        # Если полей ровно 6, значит Ключ и Значение склеились в 6-м поле
-                        if len(parts) == 6:
-                            last_field = parts[5]
-                            split_done = False
-                            for key in yt_keys:
-                                if last_field.startswith(key) and len(last_field) > len(key):
-                                    # Нашли ключ в начале поля - разделяем его и значение
-                                    value = last_field[len(key):]
-                                    parts = parts[:5] + [key, value]
-                                    split_done = True
-                                    print(f"🔧 Smart Split: separated {key}")
-                                    break
-                            
-                        # Сборка итоговой строки
-                        if len(parts) >= 7:
-                            # Ограничиваемся 7 полями (Netscape standard)
-                            sanitized_lines.append("\t".join(parts[:7]))
-                        else:
-                            sanitized_lines.append("\t".join(parts))
-                    else:
-                        sanitized_lines.append(clean_line)
+                # Простая проверка формата (должен начинаться с # Netscape или содержать HTTP Cookie)
+                is_netscape = cookies_content.startswith('# Netscape') or '# HTTP' in cookies_content[:100]
                 
-                sanitized_content = "\n".join(sanitized_lines)
-                is_netscape = sanitized_content.startswith('# Netscape') or '# HTTP' in sanitized_content[:50]
-                
-                if len(sanitized_content) > 10:
-                    preview = sanitized_content[:30].replace('\n', ' ')
-                    print(f"📊 Decoded cookie content preview: {preview}...")
-                    print(f"📏 Decoded size: {len(sanitized_content)} bytes")
+                if len(cookies_content) > 10:
+                    print(f"📊 Decoded size: {len(cookies_content)} bytes")
                     if not is_netscape:
                         print(f"⚠️ WARNING: Cookies do NOT look like Netscape format! Download might fail.")
                     else:
                         print(f"✅ Cookie format looks valid (Netscape)")
-                
-                cookies_content = sanitized_content
                 
                 with open(self.cookies_path, 'w', encoding='utf-8') as f:
                     f.write(cookies_content)
                 print(f"✅ YouTube cookies restored/updated to: {self.cookies_path}")
             except Exception as e:
                 print(f"❌ Failed to restore cookies from environment: {e}")
-                import traceback
-                traceback.print_exc()
         
         if os.path.exists(self.cookies_path):
             print(f"🍪 YouTube cookie file found: {self.cookies_path}")
@@ -166,7 +118,7 @@ class DownloadService:
         out_tmpl = os.path.join(self.download_dir, f"{safe_name}_{quality}.%(ext)s")
         
         return {
-            'format': 'bestaudio[ext=m4a]/bestaudio/best',
+            'format': 'bestaudio/best',
             'js_runtimes': {'node': {}},
             'remote_components': 'ejs:github',
             'outtmpl': out_tmpl,
@@ -226,22 +178,29 @@ class DownloadService:
                 "confirm you're not a bot", "sign in", "403", "page needs to be reloaded",
                 "forbidden", "failed to extract any player response", "failed to extract player response",
                 "innertube_context", "extractor error", "unsupported url",
-                "requested format is not available", "video unavailable", "this video is not available"
+                "requested format is not available", "video unavailable", "this video is not available",
+                "sign in to confirm", "confirm you're not a bot"
             ])
 
-        # Попытка 1: Музыкальные и мобильный веб
-        print(f"🚀 Attempt 1: Using Music & MWeb (Standard for audio)...")
-        ydl_opts['extractor_args']['youtube']['player_client'] = ['web_music', 'mweb']
+        # Попытка 1: Мобильные клиенты (самые стойкие к блокировкам)
+        print(f"🚀 Attempt 1: Using Android & iOS clients...")
+        ydl_opts['extractor_args']['youtube']['player_client'] = ['android', 'ios']
         result = await loop.run_in_executor(None, self._download_sync, download_target, ydl_opts, file_format)
 
         if is_blocked(result):
-            # Попытка 2: Нативные мобильные (No Cookies)
-            print(f"⚠️ Attempt 1 failed. Trying Attempt 2: Native Mobile (No Cookies)...")
-            ydl_opts['extractor_args']['youtube']['player_client'] = ['ios', 'android']
-            orig_cookies = ydl_opts.get('cookiefile')
-            ydl_opts['cookiefile'] = None
+            # Попытка 2: Музыкальный веб + мобильный веб
+            print(f"⚠️ Attempt 1 failed. Trying Attempt 2: Music & MWeb...")
+            ydl_opts['extractor_args']['youtube']['player_client'] = ['web_music', 'mweb']
             result = await loop.run_in_executor(None, self._download_sync, download_target, ydl_opts, file_format)
-            ydl_opts['cookiefile'] = orig_cookies
+            
+            if is_blocked(result):
+                # Попытка 3: Мобильные (No Cookies)
+                print(f"⚠️ Attempt 2 failed. Trying Attempt 3: Android/iOS (No Cookies)...")
+                ydl_opts['extractor_args']['youtube']['player_client'] = ['android', 'ios']
+                orig_cookies = ydl_opts.get('cookiefile')
+                ydl_opts['cookiefile'] = None
+                result = await loop.run_in_executor(None, self._download_sync, download_target, ydl_opts, file_format)
+                ydl_opts['cookiefile'] = orig_cookies
             
             if is_blocked(result):
                 # Попытка 3: Встроенные плееры

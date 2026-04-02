@@ -346,6 +346,9 @@ class DownloadService:
 
         normalized = re.sub(r"[^\w\s-]", " ", base)
         normalized = re.sub(r"\s+", " ", normalized).strip()
+        tokens = [t for t in re.split(r"[\s,;/|]+", normalized) if t]
+        title_like = tokens[-1] if tokens else ""
+        artist_like = " ".join(tokens[:-1]).strip() if len(tokens) > 1 else normalized
 
         variants = [
             base,
@@ -359,6 +362,26 @@ class DownloadService:
                 f"{normalized} audio",
                 f"{normalized} official audio",
             ])
+
+        # Частый кейс: "Artist1, Artist2, ... TrackName"
+        # Добавляем перестановки "track + artists", которые дают другие результаты YouTube.
+        if title_like and artist_like:
+            variants.extend([
+                f"{title_like} {artist_like}",
+                f"{title_like} by {artist_like}",
+                f"{title_like} {artist_like} official audio",
+                f"{title_like} {artist_like} topic",
+            ])
+
+        # Для длинных списков артистов пробуем укороченный вариант с первым артистом.
+        if tokens:
+            first_artist = tokens[0]
+            if title_like:
+                variants.extend([
+                    f"{first_artist} {title_like}",
+                    f"{title_like} {first_artist}",
+                    f"{first_artist} {title_like} audio",
+                ])
 
         return list(dict.fromkeys(variants))
         

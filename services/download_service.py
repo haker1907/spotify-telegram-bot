@@ -162,36 +162,49 @@ class DownloadService:
         """
         loop = asyncio.get_event_loop()
         
-        # Попытка 1: Стандартные клиенты yt-dlp (Без переопределения)
-        # yt-dlp сам знает, какие клиенты работают лучше всего для избегания ошибок PO Token
-        attempt_opts = copy.deepcopy(ydl_opts)
-        attempt_opts['extractor_args']['youtube']['player_client'] = ['default']
-        result = await loop.run_in_executor(None, self._download_sync, download_target, attempt_opts, file_format)
-
-        if self._is_blocked(result):
-        # Attempt 2
+        # Для текстового поиска сразу используем стратегию кандидатных URL,
+        # иначе ytsearch1 часто зацикливается на одном "битом" видео.
+        if not youtube_url and isinstance(download_target, str) and not download_target.startswith("http"):
+            candidate_result = await self._download_from_search_candidates(
+                search_query=search_query,
+                ydl_opts=ydl_opts,
+                file_format=file_format,
+                limit=10
+            )
+            if candidate_result and candidate_result.get('file_path'):
+                return candidate_result
+            result = candidate_result or {'error': 'Search candidates exhausted'}
+        else:
+            # Попытка 1: Стандартные клиенты yt-dlp (Без переопределения)
+            # yt-dlp сам знает, какие клиенты работают лучше всего для избегания ошибок PO Token
             attempt_opts = copy.deepcopy(ydl_opts)
-            attempt_opts['extractor_args']['youtube']['player_client'] = ['web_music', 'mweb']
-            result = await loop.run_in_executor(None, self._download_sync, download_target, attempt_opts, file_format)
-
-        if self._is_blocked(result):
-            # Attempt 3
-            attempt_opts = copy.deepcopy(ydl_opts)
-            attempt_opts['extractor_args']['youtube']['player_client'] = ['web_embedded']
-            result = await loop.run_in_executor(None, self._download_sync, download_target, attempt_opts, file_format)
-    
-        if self._is_blocked(result):
-            # Attempt 4
-            attempt_opts = copy.deepcopy(ydl_opts)
-            attempt_opts['extractor_args']['youtube']['player_client'] = ['web']
-            result = await loop.run_in_executor(None, self._download_sync, download_target, attempt_opts, file_format)
-    
-        if self._is_blocked(result):
-            # No cookies
-            attempt_opts = copy.deepcopy(ydl_opts)
-            attempt_opts['cookiefile'] = None
             attempt_opts['extractor_args']['youtube']['player_client'] = ['default']
             result = await loop.run_in_executor(None, self._download_sync, download_target, attempt_opts, file_format)
+
+            if self._is_blocked(result):
+            # Attempt 2
+                attempt_opts = copy.deepcopy(ydl_opts)
+                attempt_opts['extractor_args']['youtube']['player_client'] = ['web_music', 'mweb']
+                result = await loop.run_in_executor(None, self._download_sync, download_target, attempt_opts, file_format)
+
+            if self._is_blocked(result):
+                # Attempt 3
+                attempt_opts = copy.deepcopy(ydl_opts)
+                attempt_opts['extractor_args']['youtube']['player_client'] = ['web_embedded']
+                result = await loop.run_in_executor(None, self._download_sync, download_target, attempt_opts, file_format)
+    
+            if self._is_blocked(result):
+                # Attempt 4
+                attempt_opts = copy.deepcopy(ydl_opts)
+                attempt_opts['extractor_args']['youtube']['player_client'] = ['web']
+                result = await loop.run_in_executor(None, self._download_sync, download_target, attempt_opts, file_format)
+    
+            if self._is_blocked(result):
+                # No cookies
+                attempt_opts = copy.deepcopy(ydl_opts)
+                attempt_opts['cookiefile'] = None
+                attempt_opts['extractor_args']['youtube']['player_client'] = ['default']
+                result = await loop.run_in_executor(None, self._download_sync, download_target, attempt_opts, file_format)
     
         if self._should_try_search(result) and youtube_url:
             attempt_opts = copy.deepcopy(ydl_opts)

@@ -18,6 +18,8 @@ class DownloadService:
         
         # Путь к файлу кук (всегда используем абсолютный путь)
         self.cookies_path = os.path.join(base_dir, "cookies.txt")
+        # Источник browser cookies для yt-dlp (пример: firefox, firefox:default-release)
+        self.cookies_browser = os.getenv('YTDLP_COOKIES_FROM_BROWSER', 'firefox').strip()
         
         os.makedirs(self.download_dir, exist_ok=True)
         
@@ -64,6 +66,28 @@ class DownloadService:
                 print(f"   Set YOUTUBE_API_KEY or YOUTUBE_COOKIES_BASE64 environment variable")
             else:
                 print(f"✅ Using YouTube API instead of cookies")
+
+    def _get_cookie_auth_options(self, prefer_browser: bool = True) -> dict:
+        """
+        Сформировать auth-опции для yt-dlp.
+        Приоритет:
+        1) cookies-from-browser (если включено)
+        2) cookiefile
+        """
+        opts = {}
+
+        if prefer_browser and self.cookies_browser:
+            # Поддержка формата "browser:profile"
+            if ':' in self.cookies_browser:
+                browser, profile = self.cookies_browser.split(':', 1)
+                opts['cookiesfrombrowser'] = (browser.strip(), profile.strip())
+            else:
+                opts['cookiesfrombrowser'] = (self.cookies_browser,)
+
+        if os.path.exists(self.cookies_path):
+            opts['cookiefile'] = self.cookies_path
+
+        return opts
         
     def _get_ffmpeg_args(self, quality: str, file_format: str) -> list:
         """Получить аргументы ffmpeg на основе качества и формата"""
@@ -141,7 +165,7 @@ class DownloadService:
     },
     'socket_timeout': 60,
     'retries': 10,
-    'cookiefile': self.cookies_path if os.path.exists(self.cookies_path) else None,
+    **self._get_cookie_auth_options(prefer_browser=True),
 }
 
     async def download_from_url(self, youtube_url: str, quality: str = '192', file_format: str = 'mp3', artist: str = "Unknown", track_name: str = "Track") -> Optional[Dict]:
@@ -203,12 +227,14 @@ class DownloadService:
                 # No cookies
                 attempt_opts = copy.deepcopy(ydl_opts)
                 attempt_opts['cookiefile'] = None
+                attempt_opts.pop('cookiesfrombrowser', None)
                 attempt_opts['extractor_args']['youtube']['player_client'] = ['default']
                 result = await loop.run_in_executor(None, self._download_sync, download_target, attempt_opts, file_format)
     
         if self._should_try_search(result) and youtube_url:
             attempt_opts = copy.deepcopy(ydl_opts)
             attempt_opts['cookiefile'] = None
+            attempt_opts.pop('cookiesfrombrowser', None)
             attempt_opts['default_search'] = 'ytsearch1'
             attempt_opts['extractor_args']['youtube']['player_client'] = ['default']
             result = await loop.run_in_executor(None, self._download_sync, search_query, attempt_opts, file_format)
@@ -282,6 +308,7 @@ class DownloadService:
                 attempt_opts = copy.deepcopy(ydl_opts)
                 attempt_opts['default_search'] = None
                 attempt_opts['cookiefile'] = None
+                attempt_opts.pop('cookiesfrombrowser', None)
                 attempt_opts['extractor_args']['youtube']['player_client'] = player_client
                 result = await loop.run_in_executor(None, self._download_sync, candidate_url, attempt_opts, file_format)
                 if result and result.get('file_path'):
@@ -297,7 +324,7 @@ class DownloadService:
             'no_warnings': True,
             'extract_flat': True,
             'skip_download': True,
-            'cookiefile': self.cookies_path if os.path.exists(self.cookies_path) else None,
+            **self._get_cookie_auth_options(prefer_browser=True),
             'extractor_args': {
                 'youtube': {
                     'skip': ['translated_subs'],
@@ -419,7 +446,7 @@ class DownloadService:
             },
             'referer': 'https://www.google.com/',
             'noproxy': True,
-            'cookiefile': self.cookies_path if os.path.exists(self.cookies_path) else None,
+            **self._get_cookie_auth_options(prefer_browser=True),
         }
         
         try:
@@ -574,7 +601,7 @@ class DownloadService:
             'retries': 5,
             'geo_bypass': True,
             'age_limit': 99,  # Обход возрастных ограничений
-            'cookiefile': self.cookies_path if os.path.exists(self.cookies_path) else None,
+            **self._get_cookie_auth_options(prefer_browser=True),
         }
         
         try:

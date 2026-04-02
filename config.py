@@ -21,6 +21,9 @@ DATABASE_URL = os.getenv('DATABASE_URL', f'sqlite+aiosqlite:///{os.path.join(BAS
 
 # Web App URL (для авторизации через Telegram)
 WEB_APP_URL = os.getenv('WEB_APP_URL', 'http://localhost:5000')
+# Нормализуем URL: если протокол не указан, используем https по умолчанию
+if WEB_APP_URL and not WEB_APP_URL.startswith(('http://', 'https://')):
+    WEB_APP_URL = f"https://{WEB_APP_URL}"
 if WEB_APP_URL == 'http://localhost:5000':
     print("WEB_APP_URL не установлен! Ссылки будут вести на localhost.")
 else:

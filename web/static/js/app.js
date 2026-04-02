@@ -87,7 +87,9 @@ function initializeViewToggle() {
 // Auth Logic
 async function checkAuthToken() {
     const urlParams = new URLSearchParams(window.location.search);
-    const hostToken = urlParams.get('auth');
+    const tokenFromUrl = urlParams.get('auth');
+    const tokenFromStorage = localStorage.getItem('auth_token');
+    const hostToken = tokenFromUrl || tokenFromStorage;
 
     if (hostToken) {
         try {
@@ -102,16 +104,20 @@ async function checkAuthToken() {
             if (data.success) {
                 userData = data.user;
                 localStorage.setItem('userData', JSON.stringify(userData));
+                // Токен больше не нужен в localStorage после успешной авторизации
+                localStorage.removeItem('auth_token');
                 showNotification(`Welcome back, ${userData.first_name || userData.username}!`, 'success');
                 // Clear URL param
                 window.history.replaceState({}, document.title, window.location.pathname);
                 updateUserUI();
                 loadPlaylists();
             } else {
+                localStorage.removeItem('auth_token');
                 showNotification('Invalid or expired token', 'error');
             }
         } catch (error) {
             console.error('Auth error:', error);
+            localStorage.removeItem('auth_token');
             showNotification('Authentication failed', 'error');
         }
     }

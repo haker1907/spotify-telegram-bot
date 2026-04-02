@@ -243,11 +243,15 @@ class DownloadService:
             "no formats returned",
             "yt-dlp returned empty info",
             "download finished but output file not found",
-            "all format candidates failed"
+            "all format candidates failed",
+            "requested format is not available",
+            "only images are available",
+            "sign in to confirm",
+            "not a bot"
         ]
         return any(marker in error_text for marker in retryable_markers)
 
-    async def _download_from_search_candidates(self, search_query: str, ydl_opts: dict, file_format: str, limit: int = 5) -> Optional[Dict]:
+    async def _download_from_search_candidates(self, search_query: str, ydl_opts: dict, file_format: str, limit: int = 10) -> Optional[Dict]:
         """Ищет несколько YouTube кандидатов и пытается скачать их по очереди."""
         loop = asyncio.get_event_loop()
         candidate_urls = await loop.run_in_executor(None, self._get_search_candidate_urls_sync, search_query, limit)
@@ -258,18 +262,21 @@ class DownloadService:
         last_result = None
 
         for candidate_url in candidate_urls:
-            attempt_opts = copy.deepcopy(ydl_opts)
-            attempt_opts['default_search'] = None
-            attempt_opts['cookiefile'] = None
-            attempt_opts['extractor_args']['youtube']['player_client'] = ['default']
-            result = await loop.run_in_executor(None, self._download_sync, candidate_url, attempt_opts, file_format)
-            if result and result.get('file_path'):
-                return result
-            last_result = result
+            # На каждом candidate URL пробуем несколько client-профилей.
+            # Это увеличивает шанс получить доступный аудиопоток без PO token.
+            for player_client in (['default'], ['web'], ['web_embedded']):
+                attempt_opts = copy.deepcopy(ydl_opts)
+                attempt_opts['default_search'] = None
+                attempt_opts['cookiefile'] = None
+                attempt_opts['extractor_args']['youtube']['player_client'] = player_client
+                result = await loop.run_in_executor(None, self._download_sync, candidate_url, attempt_opts, file_format)
+                if result and result.get('file_path'):
+                    return result
+                last_result = result
 
         return last_result
 
-    def _get_search_candidate_urls_sync(self, search_query: str, limit: int = 5) -> list:
+    def _get_search_candidate_urls_sync(self, search_query: str, limit: int = 10) -> list:
         """Получить список candidate URL из YouTube поиска."""
         ydl_opts = {
             'quiet': True,

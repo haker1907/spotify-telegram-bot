@@ -161,18 +161,6 @@ class DownloadService:
         """
         loop = asyncio.get_event_loop()
         
-        def is_blocked(res):
-            if not res or not isinstance(res, dict) or 'error' not in res:
-                return False
-            e = res['error'].lower()
-            return any(msg in e for msg in [
-                "confirm you're not a bot", "sign in", "403", "page needs to be reloaded",
-                "forbidden", "failed to extract any player response", "failed to extract player response",
-                "innertube_context", "extractor error", "unsupported url",
-                 "video unavailable", "this video is not available",
-                "sign in to confirm", "confirm you're not a bot"
-            ])
-
         # Попытка 1: Стандартные клиенты yt-dlp (Без переопределения)
         # yt-dlp сам знает, какие клиенты работают лучше всего для избегания ошибок PO Token
         attempt_opts = copy.deepcopy(ydl_opts)
@@ -210,8 +198,116 @@ class DownloadService:
             attempt_opts['default_search'] = 'ytsearch1'
             attempt_opts['extractor_args']['youtube']['player_client'] = ['default']
             result = await loop.run_in_executor(None, self._download_sync, search_query, attempt_opts, file_format)
+
+        # Если первый поисковый результат тоже недоступен, пробуем несколько кандидатов.
+        # Это важно для кейса "Video unavailable" на конкретном видео.
+        if self._should_try_search(result):
+            candidate_result = await self._download_from_search_candidates(
+                search_query=search_query,
+                ydl_opts=ydl_opts,
+                file_format=file_format,
+                limit=5
+            )
+            if candidate_result and candidate_result.get('file_path'):
+                return candidate_result
     
         return result   
+
+    def _is_blocked(self, res: Optional[Dict]) -> bool:
+        """Определить, что ошибка связана с блокировкой/недоступностью источника."""
+        if not res or not isinstance(res, dict) or 'error' not in res:
+            return False
+        e = str(res['error']).lower()
+        blocked_markers = [
+            "confirm you're not a bot", "sign in", "403", "page needs to be reloaded",
+            "forbidden", "failed to extract any player response", "failed to extract player response",
+            "innertube_context", "extractor error", "unsupported url",
+            "video unavailable", "this content isn’t available", "this content isn't available",
+            "this video is not available", "sign in to confirm"
+        ]
+        return any(marker in e for marker in blocked_markers)
+
+    def _should_try_search(self, res: Optional[Dict]) -> bool:
+        """Решить, нужен ли fallback на дополнительные поисковые кандидаты."""
+        if not res:
+            return True
+        if not isinstance(res, dict):
+            return True
+        if res.get('file_path'):
+            return False
+        if self._is_blocked(res):
+            return True
+
+        error_text = str(res.get('error', '')).lower()
+        retryable_markers = [
+            "no formats returned",
+            "yt-dlp returned empty info",
+            "download finished but output file not found",
+            "all format candidates failed"
+        ]
+        return any(marker in error_text for marker in retryable_markers)
+
+    async def _download_from_search_candidates(self, search_query: str, ydl_opts: dict, file_format: str, limit: int = 5) -> Optional[Dict]:
+        """Ищет несколько YouTube кандидатов и пытается скачать их по очереди."""
+        loop = asyncio.get_event_loop()
+        candidate_urls = await loop.run_in_executor(None, self._get_search_candidate_urls_sync, search_query, limit)
+        if not candidate_urls:
+            return None
+
+        print(f"🔁 Trying fallback candidates for query: {search_query} (count={len(candidate_urls)})")
+        last_result = None
+
+        for candidate_url in candidate_urls:
+            attempt_opts = copy.deepcopy(ydl_opts)
+            attempt_opts['default_search'] = None
+            attempt_opts['cookiefile'] = None
+            attempt_opts['extractor_args']['youtube']['player_client'] = ['default']
+            result = await loop.run_in_executor(None, self._download_sync, candidate_url, attempt_opts, file_format)
+            if result and result.get('file_path'):
+                return result
+            last_result = result
+
+        return last_result
+
+    def _get_search_candidate_urls_sync(self, search_query: str, limit: int = 5) -> list:
+        """Получить список candidate URL из YouTube поиска."""
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': True,
+            'default_search': f'ytsearch{max(1, limit)}',
+            'skip_download': True,
+            'cookiefile': self.cookies_path if os.path.exists(self.cookies_path) else None,
+            'extractor_args': {
+                'youtube': {
+                    'skip': ['translated_subs'],
+                }
+            },
+        }
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(search_query, download=False)
+            if not info:
+                return []
+
+            entries = info.get('entries') or []
+            urls = []
+            for entry in entries:
+                if not entry:
+                    continue
+                video_id = entry.get('id')
+                webpage_url = entry.get('webpage_url')
+                if webpage_url:
+                    urls.append(webpage_url)
+                elif video_id:
+                    urls.append(f"https://www.youtube.com/watch?v={video_id}")
+
+            # Удаляем дубликаты с сохранением порядка
+            unique_urls = list(dict.fromkeys(urls))
+            return unique_urls[:limit]
+        except Exception as e:
+            print(f"⚠️ Failed to collect fallback candidates: {e}")
+            return []
         
     async def get_metadata_only(self, artist: str, track_name: str) -> Optional[Dict]:
         """

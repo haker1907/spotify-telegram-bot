@@ -20,6 +20,7 @@ class DownloadService:
         self.cookies_path = os.path.join(base_dir, "cookies.txt")
         # Источник browser cookies для yt-dlp (пример: firefox, firefox:default-release)
         self.cookies_browser = os.getenv('YTDLP_COOKIES_FROM_BROWSER', 'firefox').strip()
+        self.cookies_browser_available = self._is_browser_cookies_available(self.cookies_browser)
         
         os.makedirs(self.download_dir, exist_ok=True)
         
@@ -67,6 +68,33 @@ class DownloadService:
             else:
                 print(f"✅ Using YouTube API instead of cookies")
 
+        if self.cookies_browser and self.cookies_browser_available:
+            print(f"🦊 Browser cookies enabled: {self.cookies_browser}")
+        elif self.cookies_browser:
+            print(f"⚠️ Browser cookies disabled: profile not found for '{self.cookies_browser}'")
+            print("   Using cookiefile/env cookies fallback.")
+
+    def _is_browser_cookies_available(self, browser_value: str) -> bool:
+        """Проверка, есть ли профиль браузера в текущем окружении."""
+        if not browser_value:
+            return False
+
+        browser_name = browser_value.split(':', 1)[0].strip().lower()
+        home = os.path.expanduser('~')
+
+        if browser_name == 'firefox':
+            candidates = [
+                os.path.join(home, '.config', 'mozilla', 'firefox'),
+                os.path.join(home, '.mozilla', 'firefox'),
+                os.path.join(home, '.var', 'app', 'org.mozilla.firefox', 'config', 'mozilla', 'firefox'),
+                os.path.join(home, '.var', 'app', 'org.mozilla.firefox', '.mozilla', 'firefox'),
+                os.path.join(home, 'snap', 'firefox', 'common', '.mozilla', 'firefox'),
+            ]
+            return any(os.path.isdir(path) for path in candidates)
+
+        # Для остальных браузеров пробуем передать в yt-dlp "как есть"
+        return True
+
     def _get_cookie_auth_options(self, prefer_browser: bool = True) -> dict:
         """
         Сформировать auth-опции для yt-dlp.
@@ -76,7 +104,7 @@ class DownloadService:
         """
         opts = {}
 
-        if prefer_browser and self.cookies_browser:
+        if prefer_browser and self.cookies_browser and self.cookies_browser_available:
             # Поддержка формата "browser:profile"
             if ':' in self.cookies_browser:
                 browser, profile = self.cookies_browser.split(':', 1)

@@ -6,6 +6,7 @@ import httpx
 import copy
 import glob
 import time
+import re
 
 class DownloadService:
     """Сервис для поиска и скачивания музыки с YouTube"""
@@ -206,7 +207,7 @@ class DownloadService:
                 search_query=search_query,
                 ydl_opts=ydl_opts,
                 file_format=file_format,
-                limit=5
+                limit=10
             )
             if candidate_result and candidate_result.get('file_path'):
                 return candidate_result
@@ -278,11 +279,10 @@ class DownloadService:
 
     def _get_search_candidate_urls_sync(self, search_query: str, limit: int = 10) -> list:
         """Получить список candidate URL из YouTube поиска."""
-        ydl_opts = {
+        ydl_opts_base = {
             'quiet': True,
             'no_warnings': True,
             'extract_flat': True,
-            'default_search': f'ytsearch{max(1, limit)}',
             'skip_download': True,
             'cookiefile': self.cookies_path if os.path.exists(self.cookies_path) else None,
             'extractor_args': {
@@ -292,22 +292,31 @@ class DownloadService:
             },
         }
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(search_query, download=False)
-            if not info:
-                return []
-
-            entries = info.get('entries') or []
             urls = []
-            for entry in entries:
-                if not entry:
+            for query_variant in self._build_query_variants(search_query):
+                if len(urls) >= limit:
+                    break
+
+                ydl_opts = copy.deepcopy(ydl_opts_base)
+                # Берем сразу несколько результатов в каждом варианте, а не только ytsearch1
+                ydl_opts['default_search'] = 'ytsearch5'
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(query_variant, download=False)
+                if not info:
                     continue
-                video_id = entry.get('id')
-                webpage_url = entry.get('webpage_url')
-                if webpage_url:
-                    urls.append(webpage_url)
-                elif video_id:
-                    urls.append(f"https://www.youtube.com/watch?v={video_id}")
+
+                entries = info.get('entries') or []
+                for entry in entries:
+                    if not entry:
+                        continue
+                    video_id = entry.get('id')
+                    webpage_url = entry.get('webpage_url')
+                    if webpage_url:
+                        urls.append(webpage_url)
+                    elif video_id:
+                        urls.append(f"https://www.youtube.com/watch?v={video_id}")
+                    if len(urls) >= limit:
+                        break
 
             # Удаляем дубликаты с сохранением порядка
             unique_urls = list(dict.fromkeys(urls))
@@ -315,6 +324,30 @@ class DownloadService:
         except Exception as e:
             print(f"⚠️ Failed to collect fallback candidates: {e}")
             return []
+
+    def _build_query_variants(self, search_query: str) -> list:
+        """Построить варианты поискового запроса для обхода плохого первого результата."""
+        base = (search_query or "").strip()
+        if not base:
+            return []
+
+        normalized = re.sub(r"[^\w\s-]", " ", base)
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+
+        variants = [
+            base,
+            f"{base} audio",
+            f"{base} official audio",
+            f"{base} topic",
+        ]
+        if normalized and normalized != base:
+            variants.extend([
+                normalized,
+                f"{normalized} audio",
+                f"{normalized} official audio",
+            ])
+
+        return list(dict.fromkeys(variants))
         
     async def get_metadata_only(self, artist: str, track_name: str) -> Optional[Dict]:
         """
@@ -587,35 +620,6 @@ class DownloadService:
             
         return None
     
-    def _is_blocked(self, result: Optional[Dict]) -> bool:
-        """Проверить заблокирована ли попытка скачивания"""
-        if not result:
-            return True
-        if 'error' in result:
-            error = result['error'].lower()
-            # Проверяем на типичные ошибки блокировки YouTube
-            blocked_keywords = [
-                'sign in',
-                'bot',
-                'challenge',
-                'verify',
-                'format is not available',
-                'no formats',
-                'requested format is not available'
-            ]
-            return any(keyword in error for keyword in blocked_keywords)
-        return False
-
-    def _should_try_search(self, result: Optional[Dict]) -> bool:
-        """Проверить нужно ли пробовать поиск вместо прямой ссылки"""
-        if not result:
-            return True
-        if 'error' in result:
-            error = result['error'].lower()
-            # Если ошибка связана с форматом или недоступностью трека
-            return 'format' in error or 'not found' in error or 'available' in error
-        return False
-
     def cleanup_file(self, file_path: str):
         """Удалить скачанный файл"""
         try:

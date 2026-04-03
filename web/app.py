@@ -631,9 +631,11 @@ def sync_library():
 def get_library():
     """Получить все треки из библиотеки (кэша)"""
     try:
+        limit = int(request.args.get('limit', 1000))
+        limit = max(1, min(limit, 2000))
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        tracks_dict = loop.run_until_complete(db.get_library_tracks(limit=1000))
+        tracks_dict = loop.run_until_complete(db.get_library_tracks(limit=limit))
         loop.close()
         
         print(f"🌐 [API] /api/library returning {len(tracks_dict)} tracks", flush=True)

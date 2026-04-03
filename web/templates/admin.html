@@ -242,78 +242,6 @@
             }).join('');
 
             tracksList.innerHTML = `<div class="results-grid" id="adminTracksGrid">${cards}</div>`;
-
-            // Фоновая догрузка обложек, чтобы не держать страницу на "Loading..."
-            enrichMissingTrackImages(tracks);
-        }
-
-        async function enrichMissingTrackImages(tracks) {
-            try {
-                const missing = (tracks || []).filter(t => !t.image).slice(0, 30);
-                if (missing.length === 0) return;
-
-                // Безопасный escape для CSS-селекторов (на случай отсутствия CSS.escape)
-                const cssEscape = (value) => {
-                    const s = String(value ?? '');
-                    if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(s);
-                    // минимальный фолбэк: экранируем кавычки и обратный слеш
-                    return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-                };
-
-                const res = await fetch('/admin/api/tracks/enrich-images', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'same-origin',
-                    body: JSON.stringify({
-                        tracks: missing.map(t => ({
-                            id: t.id,
-                            name: t.name,
-                            artist: t.artist,
-                            spotify_url: t.spotify_url
-                        }))
-                    })
-                });
-                const data = await res.json();
-                if (!res.ok) return;
-                const images = data.images || {};
-
-                let applied = 0;
-                Object.entries(images).forEach(([id, url]) => {
-                    const card = document.querySelector(`.track-card[data-track-id="${cssEscape(id)}"]`);
-                    if (!card) return;
-                    const imgWrap = card.querySelector('.track-image');
-                    if (!imgWrap) return;
-                    imgWrap.innerHTML = `<img loading="lazy" decoding="async" src="${url}" alt="" />`;
-                    applied += 1;
-                });
-
-                // Если Spotify временно не отдал картинки (лимиты/таймауты), попробуем один повтор через паузу
-                if (applied === 0 && missing.length > 0) {
-                    setTimeout(async () => {
-                        try {
-                            const res2 = await fetch('/admin/api/tracks/enrich-images', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                credentials: 'same-origin',
-                                body: JSON.stringify({ tracks: missing })
-                            });
-                            const data2 = await res2.json();
-                            if (!res2.ok) return;
-                            const images2 = data2.images || {};
-                            Object.entries(images2).forEach(([id, url]) => {
-                                const card = document.querySelector(`.track-card[data-track-id="${cssEscape(id)}"]`);
-                                if (!card) return;
-                                const imgWrap = card.querySelector('.track-image');
-                                if (!imgWrap) return;
-                                imgWrap.innerHTML = `<img loading="lazy" decoding="async" src="${url}" alt="" />`;
-                            });
-                        } catch (_) {}
-                    }, 1200);
-                }
-            } catch (e) {
-                // Не ломаем админку из-за обложек
-                console.warn('enrichMissingTrackImages failed', e);
-            }
         }
 
         async function apiGet(path) {
@@ -335,7 +263,8 @@
                 tracksList.innerHTML = 'Loading...';
 
                 const usersData = await apiGet('/admin/api/users?limit=50&offset=0');
-                const tracksData = await apiGet('/admin/api/tracks?limit=50');
+                // Берём тот же список, что и в Discover (Library)
+                const tracksData = await apiGet('/api/library?limit=50');
 
                 renderUsers(usersData.users || []);
                 renderTracks(tracksData.tracks || []);

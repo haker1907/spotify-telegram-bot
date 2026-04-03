@@ -70,8 +70,9 @@
                         </svg>
                     </div>
                     <button class="logout-btn" id="logoutBtn" title="Logout">
-                        <svg viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M10 17l1.41-1.41L8.83 13H20v-2H8.83l2.58-2.59L10 7l-7 7 7 7zm-8 4h10v-2H2V5h10V3H2c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2z"/>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-box-arrow-right" viewBox="0 0 16 16">
+                            <path fill-rule="evenodd" d="M10 12.5a.5.5 0 0 1-.5.5h-8a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5h8a.5.5 0 0 1 .5.5v2a.5.5 0 0 0 1 0v-2A1.5 1.5 0 0 0 9.5 2h-8A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h8a1.5 1.5 0 0 0 1.5-1.5v-2a.5.5 0 0 0-1 0z"/>
+                            <path fill-rule="evenodd" d="M15.854 8.354a.5.5 0 0 0 0-.708l-3-3a.5.5 0 0 0-.708.708L14.293 7.5H5.5a.5.5 0 0 0 0 1h8.793l-2.147 2.146a.5.5 0 0 0 .708.708z"/>
                         </svg>
                     </button>
                 </div>
@@ -242,6 +243,22 @@
                     <span>Download</span>
                 </button>
             </div>
+        </div>
+    </div>
+
+    <!-- History Details Modal -->
+    <div id="historyDetailsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Downloaded track</h3>
+                <button class="close-btn" onclick="closeHistoryDetailsModal()">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path
+                            d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body" id="historyDetailsBody"></div>
         </div>
     </div>
 

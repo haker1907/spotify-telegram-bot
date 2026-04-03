@@ -125,7 +125,7 @@ function renderHistoryItem(item, index) {
     const quality = item.quality || '';
 
     return `
-        <div class="history-item" role="button" tabindex="0" onclick="playHistoryIndex(${index})">
+        <div class="history-item" role="button" tabindex="0" onclick="openHistoryDetails(${index})">
             <div class="track-image history-thumb">
                 <svg viewBox="0 0 24 24" fill="currentColor" class="history-thumb-icon">
                     <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
@@ -143,16 +143,71 @@ function renderHistoryItem(item, index) {
     `;
 }
 
-function playHistoryIndex(index) {
+function openHistoryDetails(index) {
     const idx = Number(index);
     if (!Number.isFinite(idx)) return;
-    const track = historyData?.[idx];
+    const item = historyItemsRaw?.[idx];
+    const track = item?.track;
     if (!track) return;
-    // Очередь = история, чтобы next/prev работали "как Spotify"
+
+    const modal = document.getElementById('historyDetailsModal');
+    const body = document.getElementById('historyDetailsBody');
+    if (!modal || !body) return;
+
+    const downloadedAt = item.downloaded_at ? new Date(item.downloaded_at) : null;
+    const downloadedAtText = downloadedAt && !isNaN(downloadedAt.getTime()) ? downloadedAt.toLocaleString() : '';
+    const quality = item.quality || '';
+
+    body.innerHTML = `
+        <div style="display:flex; gap:12px; align-items:center;">
+            <div style="width:56px; height:56px; border-radius:8px; overflow:hidden; background: rgba(0,0,0,0.25); display:flex; align-items:center; justify-content:center;">
+                ${track.image ? `<img src="${track.image}" alt="" style="width:100%;height:100%;object-fit:cover;display:block;" />`
+            : `<svg viewBox="0 0 24 24" fill="currentColor" style="width:26px;height:26px;opacity:.85;"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>`}
+            </div>
+            <div style="min-width:0;">
+                <div style="font-weight:800; font-size:16px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${track.name || ''}">${track.name || ''}</div>
+                <div style="opacity:.8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${track.artist || ''}">${track.artist || ''}</div>
+            </div>
+        </div>
+        <div style="margin-top:14px; display:grid; gap:8px;">
+            <div><span style="opacity:.7;">Качество:</span> <span style="font-weight:700;">${quality || '-'}</span></div>
+            <div><span style="opacity:.7;">Скачано:</span> <span style="font-weight:700;">${downloadedAtText || '-'}</span></div>
+        </div>
+        <div style="margin-top:16px; display:flex; gap:10px; flex-wrap:wrap;">
+            <button class="admin-btn" style="padding:10px 12px;" onclick="closeHistoryDetailsModal(); playHistoryFromModal(${idx});">Play</button>
+            <button class="admin-btn" style="padding:10px 12px; background: transparent; border:1px solid rgba(255,255,255,0.18);" onclick="closeHistoryDetailsModal(); downloadHistoryFromModal(${idx});">Download</button>
+        </div>
+    `;
+
+    modal.classList.add('active');
+}
+
+function closeHistoryDetailsModal() {
+    document.getElementById('historyDetailsModal')?.classList.remove('active');
+}
+
+function playHistoryFromModal(index) {
+    const idx = Number(index);
+    if (!Number.isFinite(idx)) return;
+    const track = historyItemsRaw?.[idx]?.track;
+    if (!track) return;
+    // Очередь = история, чтобы next/prev работали после явного Play
     currentPlaylist = historyData.filter(Boolean);
     const actualIndex = currentPlaylist.findIndex(t => t && t.id === track.id);
     currentTrackIndex = actualIndex >= 0 ? actualIndex : 0;
     playTrack(null, track);
+}
+
+function downloadHistoryFromModal(index) {
+    const idx = Number(index);
+    if (!Number.isFinite(idx)) return;
+    const track = historyItemsRaw?.[idx]?.track;
+    if (!track) return;
+
+    // Открываем download modal через временную "карточку"
+    // (используем существующую логику startDownload())
+    currentTrack = track;
+    document.getElementById('downloadModal')?.classList.add('active');
 }
 
 async function loadHistory(limit = 10) {
@@ -1136,6 +1191,10 @@ function showNotification(message, type = 'info') {
 
 document.getElementById('downloadModal').addEventListener('click', (e) => {
     if (e.target.id === 'downloadModal') closeDownloadModal();
+});
+
+document.getElementById('historyDetailsModal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'historyDetailsModal') closeHistoryDetailsModal();
 });
 
 // Format Quality Switcher

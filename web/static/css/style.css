@@ -506,7 +506,7 @@ body {
     align-items: center;
     gap: 12px;
     background: var(--spotify-gray);
-    padding: 4px 12px 4px 4px;
+    padding: 6px 12px 6px 21px;
     border-radius: 20px;
     cursor: pointer;
 }

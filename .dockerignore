@@ -22,10 +22,31 @@ Thumbs.db
 
 # Project specific
 downloads/
+data/
+database/backups/
 *.db
 *.sqlite
 *.sqlite3
+.env
+.env.*
+!.env.example
 .env.local
+
+# Cookies / секреты (не в образ; на Railway — YOUTUBE_COOKIES_BASE64)
+cookies.txt
+cookies_*.txt
+cookies_fixed.txt
+cookies_base64.txt
+
+# Мусор и отладка (тяжёлые/лишние для рантайма)
+debug_output.txt
+formats.txt
+*.log
+
+# Локальные скрипты проверки (не нужны в контейнере)
+test_*.py
+check_*.py
+debug_*.py
 
 # Git
 .git/

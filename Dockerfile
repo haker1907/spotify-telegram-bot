@@ -5,10 +5,11 @@ FROM python:3.10-slim
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1
 
-# Устанавливаем системные зависимости для ffmpeg и Node.js (для yt-dlp)
-RUN apt-get update && apt-get install -y \
+# ffmpeg для конвертации аудио; --no-install-recommends ускоряет сборку и уменьшает образ
+# Node.js не нужен yt-dlp для типичного YouTube; при необходимости верните: nodejs
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
-    nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Копируем файл зависимостей

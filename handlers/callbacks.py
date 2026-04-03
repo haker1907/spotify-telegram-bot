@@ -463,7 +463,7 @@ async def add_track_to_playlist(query, context, callback_data, lang="ru"):
         # Trigger immediate backup
         backup_service = context.bot_data.get('backup_service')
         if backup_service:
-            context.application.create_task(backup_service.backup_to_telegram())
+            context.application.create_task(backup_service.backup_to_telegram(force=True))
     else:
         await query.message.edit_text(
             get_string("add_to_playlist_exists", lang),
@@ -588,7 +588,7 @@ async def remove_track_from_playlist(query, context, callback_data, lang="ru"):
         # Trigger immediate backup
         backup_service = context.bot_data.get('backup_service')
         if backup_service:
-            context.application.create_task(backup_service.backup_to_telegram())
+            context.application.create_task(backup_service.backup_to_telegram(force=True))
     else:
         await query.message.edit_text(
             "❌ Error" if lang == "en" else "❌ Не удалось удалить трек",
@@ -632,7 +632,7 @@ async def delete_playlist(query, context, callback_data, lang="ru"):
         # Trigger immediate backup
         backup_service = context.bot_data.get('backup_service')
         if backup_service:
-            context.application.create_task(backup_service.backup_to_telegram())
+            context.application.create_task(backup_service.backup_to_telegram(force=True))
     else:
         await query.message.edit_text(
             "❌ Error" if lang == "en" else "❌ Не удалось удалить плейлист",

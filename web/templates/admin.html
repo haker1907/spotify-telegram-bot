@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - Music Downloader</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        body {
+            display: block;
+            overflow: auto;
+            height: auto;
+            grid-template-columns: none;
+            grid-template-rows: none;
+            padding: 0;
+        }
+        .admin-wrap {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 24px 16px;
+            color: #fff;
+        }
+        .admin-card {
+            background: rgba(18, 18, 18, 0.6);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 18px;
+        }
+        .admin-card h2 {
+            margin-bottom: 12px;
+            font-size: 18px;
+        }
+        .admin-row {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            justify-content: space-between;
+        }
+        table.admin-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        table.admin-table th,
+        table.admin-table td {
+            padding: 10px 8px;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            text-align: left;
+            vertical-align: top;
+        }
+        table.admin-table th {
+            color: rgba(255,255,255,0.7);
+            font-weight: 700;
+        }
+        .mono {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        }
+        .admin-btn {
+            background: var(--spotify-green);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 14px;
+            cursor: pointer;
+            font-weight: 700;
+        }
+        .admin-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-wrap">
+        <div class="admin-card">
+            <div class="admin-row">
+                <h1 style="margin:0; font-size:22px;">Admin Panel</h1>
+                <button class="admin-btn" id="refreshBtn">Refresh</button>
+            </div>
+            <div id="adminAuthMsg" style="margin-top:12px; color: rgba(255,255,255,0.8);"></div>
+        </div>
+
+        <div class="admin-card">
+            <h2>Users</h2>
+            <div id="usersList"></div>
+        </div>
+
+        <div class="admin-card">
+            <h2>Tracks</h2>
+            <div id="tracksList"></div>
+        </div>
+    </div>
+
+    <script>
+        const sessionToken = localStorage.getItem('session_token');
+
+        const usersList = document.getElementById('usersList');
+        const tracksList = document.getElementById('tracksList');
+        const refreshBtn = document.getElementById('refreshBtn');
+        const adminAuthMsg = document.getElementById('adminAuthMsg');
+
+        function showMsg(text) {
+            adminAuthMsg.textContent = text || '';
+        }
+
+        function renderUsers(users) {
+            if (!users || users.length === 0) {
+                usersList.innerHTML = '<div style="opacity:0.8;">No users</div>';
+                return;
+            }
+            const rows = users.map(u => `
+                <tr>
+                    <td class="mono">${u.id}</td>
+                    <td>${u.username || ''}</td>
+                    <td>${u.first_name || ''}</td>
+                    <td>${u.last_name || ''}</td>
+                    <td>${u.total_downloads}</td>
+                    <td>${u.last_active || ''}</td>
+                    <td>${u.is_admin ? 'yes' : 'no'}</td>
+                </tr>
+            `).join('');
+
+            usersList.innerHTML = `
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>User ID</th>
+                            <th>Username</th>
+                            <th>First</th>
+                            <th>Last</th>
+                            <th>Total downloads</th>
+                            <th>Last active</th>
+                            <th>Admin</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            `;
+        }
+
+        function renderTracks(tracks) {
+            if (!tracks || tracks.length === 0) {
+                tracksList.innerHTML = '<div style="opacity:0.8;">No tracks</div>';
+                return;
+            }
+            const rows = tracks.map(t => `
+                <tr>
+                    <td class="mono">${t.id}</td>
+                    <td>${t.name || ''}</td>
+                    <td>${t.artist || ''}</td>
+                    <td>${t.download_count}</td>
+                    <td class="mono" style="word-break: break-word;">${t.spotify_url || ''}</td>
+                    <td>
+                        <button class="admin-btn" style="padding:8px 10px;" onclick="deleteTrack('${t.id}')">Delete</button>
+                    </td>
+                </tr>
+            `).join('');
+
+            tracksList.innerHTML = `
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>Track ID</th>
+                            <th>Name</th>
+                            <th>Artist</th>
+                            <th>Downloads</th>
+                            <th>Spotify URL</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            `;
+        }
+
+        async function apiGet(path) {
+            if (!sessionToken) throw new Error('No session token');
+            const res = await fetch(path, {
+                headers: { 'Authorization': `Bearer ${sessionToken}` }
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.error || 'Request failed');
+            }
+            return data;
+        }
+
+        async function loadAdmin() {
+            try {
+                refreshBtn.disabled = true;
+                showMsg('Loading...');
+                usersList.innerHTML = 'Loading...';
+                tracksList.innerHTML = 'Loading...';
+
+                const usersData = await apiGet('/admin/api/users?limit=50&offset=0');
+                const tracksData = await apiGet('/admin/api/tracks?limit=50');
+
+                renderUsers(usersData.users || []);
+                renderTracks(tracksData.tracks || []);
+
+                showMsg('');
+            } catch (e) {
+                console.error(e);
+                showMsg(e.message || 'Admin load failed');
+            } finally {
+                refreshBtn.disabled = false;
+            }
+        }
+
+        async function deleteTrack(trackId) {
+            if (!trackId) return;
+            const ok = confirm(`Delete track from database?\n\n${trackId}`);
+            if (!ok) return;
+
+            try {
+                showMsg('Deleting...');
+                const res = await fetch('/admin/api/tracks/delete', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${sessionToken}`
+                    },
+                    body: JSON.stringify({ track_id: trackId })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    throw new Error(data.error || 'Delete failed');
+                }
+                showMsg('');
+                await loadAdmin();
+            } catch (e) {
+                console.error(e);
+                showMsg(e.message || 'Delete failed');
+            }
+        }
+
+        if (!sessionToken) {
+            showMsg('Please login in the web app first.');
+            refreshBtn.disabled = true;
+        } else {
+            loadAdmin();
+            refreshBtn.addEventListener('click', loadAdmin);
+        }
+    </script>
+</body>
+</html>
+

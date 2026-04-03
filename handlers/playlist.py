@@ -137,7 +137,7 @@ async def receive_playlist_description(update: Update, context: ContextTypes.DEF
         # Trigger immediate backup (Write-Through)
         backup_service = context.bot_data.get('backup_service')
         if backup_service:
-            context.application.create_task(backup_service.backup_to_telegram())
+            context.application.create_task(backup_service.backup_to_telegram(force=True))
         
         return ConversationHandler.END
     
@@ -217,7 +217,7 @@ async def select_playlist_callback(update: Update, context: ContextTypes.DEFAULT
         # Trigger immediate backup (Write-Through)
         backup_service = context.bot_data.get('backup_service')
         if backup_service:
-            context.application.create_task(backup_service.backup_to_telegram())
+            context.application.create_task(backup_service.backup_to_telegram(force=True))
     else:
         msg = "⚠️ Трек уже есть в этом плейлисте" if lang == "ru" else "⚠️ Track already in this playlist"
         await query.answer(msg, show_alert=True)

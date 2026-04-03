@@ -29,6 +29,7 @@ class User(Base):
     auto_delete: Mapped[bool] = mapped_column(Integer, default=0)  # SQLite не поддерживает Boolean
     format: Mapped[str] = mapped_column(String(10), default='mp3')  # mp3, flac
     notifications: Mapped[bool] = mapped_column(Integer, default=1)
+    is_admin: Mapped[int] = mapped_column(Integer, default=0)  # 0/1, SQLite-friendly
     
     # Статистика (Функция 9)
     total_downloads: Mapped[int] = mapped_column(Integer, default=0)

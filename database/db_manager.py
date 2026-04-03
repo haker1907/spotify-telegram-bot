@@ -97,6 +97,21 @@ class DatabaseManager:
                 Base.metadata.create_all(bind=sync_conn, checkfirst=True)
             
             await conn.run_sync(create_tables)
+
+            # Lightweight schema sync for SQLite (no migrations framework).
+            # We ensure `users.is_admin` exists so admin checks won't crash on old DBs.
+            if "sqlite" in self.database_url:
+                def ensure_admin_column(sync_conn):
+                    try:
+                        columns = [row[1] for row in sync_conn.exec_driver_sql("PRAGMA table_info(users)")]
+                        if "is_admin" not in columns:
+                            print("⚙️ [DB] Adding missing column users.is_admin...")
+                            sync_conn.exec_driver_sql("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
+                    except Exception as e:
+                        # Don't block startup if schema introspection fails.
+                        print(f"⚠️ [DB] Could not ensure users.is_admin column: {e}")
+
+                await conn.run_sync(ensure_admin_column)
         print("✅ База данных инициализирована (WAL mode enabled)")
 
     def get_database_file_path(self) -> Optional[str]:
@@ -272,6 +287,22 @@ class DatabaseManager:
         async with self.async_session() as session:
             result = await session.execute(select(Track).where(Track.id == track_id))
             return result.scalar_one_or_none()
+
+    async def delete_track_for_admin(self, track_id: str) -> bool:
+        """
+        Админ: удалить трек из БД.
+        Примечание: удаление файла из Telegram Storage требует message_id файлов, в текущей схеме он не хранится,
+        поэтому здесь удаляем только связанные записи в БД (с каскадом по внешним ключам).
+        """
+        async with self.async_session() as session:
+            result = await session.execute(select(Track).where(Track.id == track_id))
+            track = result.scalar_one_or_none()
+            if not track:
+                return False
+
+            await session.execute(delete(Track).where(Track.id == track_id))
+            await session.commit()
+            return True
     
     # ========== ТРЕКИ В ПЛЕЙЛИСТАХ ==========
     
@@ -561,6 +592,77 @@ class DatabaseManager:
                 'member_since': user.created_at,
                 'last_active': user.last_active
             }
+
+    async def is_admin(self, user_id: int) -> bool:
+        """
+        Проверить, является ли пользователь админом.
+        Источник истины:
+        1) БД: `users.is_admin`
+        2) Env fallback: `ADMIN_USER_IDS` (comma-separated)
+        """
+        admin_ids_raw = os.getenv("ADMIN_USER_IDS", "").strip()
+        if admin_ids_raw:
+            try:
+                admin_ids = {int(x.strip()) for x in admin_ids_raw.split(",") if x.strip()}
+                if user_id in admin_ids:
+                    return True
+            except ValueError:
+                # Ignore malformed env
+                pass
+
+        async with self.async_session() as session:
+            try:
+                result = await session.execute(select(User.is_admin).where(User.id == user_id))
+                is_admin_val = result.scalar_one_or_none()
+                return bool(is_admin_val)
+            except Exception as e:
+                # If DB schema is older than code (missing column), fail closed.
+                print(f"⚠️ Admin check failed for user_id={user_id}: {e}")
+                return False
+
+    async def get_users_overview_for_admin(self, limit: int = 100, offset: int = 0):
+        """Админ: обзор пользователей (только чтение)."""
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(User)
+                .order_by(User.last_active.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+            users = result.scalars().all()
+
+            return [
+                {
+                    "id": u.id,
+                    "username": u.username,
+                    "first_name": u.first_name,
+                    "last_name": u.last_name,
+                    "total_downloads": u.total_downloads,
+                    "total_size_mb": u.total_size_mb,
+                    "last_active": u.last_active,
+                    "is_admin": bool(getattr(u, "is_admin", 0)),
+                }
+                for u in users
+            ]
+
+    async def get_tracks_overview_for_admin(self, limit: int = 100):
+        """Админ: обзор треков (только чтение)."""
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(Track).order_by(Track.download_count.desc()).limit(limit)
+            )
+            tracks = result.scalars().all()
+
+            return [
+                {
+                    "id": t.id,
+                    "name": t.name,
+                    "artist": t.artist,
+                    "download_count": t.download_count,
+                    "spotify_url": t.spotify_url,
+                }
+                for t in tracks
+            ]
     
     # ========== КЭШИРОВАНИЕ (Функция 10) ==========
     

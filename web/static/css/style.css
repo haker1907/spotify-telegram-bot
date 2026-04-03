@@ -49,6 +49,18 @@ body {
 
 .content-section.active {
     display: block;
+    animation: tabAppear 0.25s ease both;
+}
+
+@keyframes tabAppear {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 /* Sidebar */
@@ -691,6 +703,63 @@ body {
     transition: background var(--transition-normal);
     position: relative;
     cursor: default;
+    animation: cardEnter 0.25s ease both;
+}
+
+@keyframes cardEnter {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.skeleton-grid {
+    display: grid;
+}
+
+.skeleton-card {
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    padding: 16px;
+    position: relative;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.skeleton-card::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -40%;
+    width: 40%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.18), transparent);
+    transform: skewX(-15deg);
+    animation: skeletonMove 1.2s ease-in-out infinite;
+}
+
+.skeleton-row {
+    height: 12px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.10);
+    margin-bottom: 10px;
+}
+
+.skeleton-img {
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.08);
+    margin-bottom: 12px;
+}
+
+@keyframes skeletonMove {
+    from { left: -40%; }
+    to { left: 120%; }
 }
 
 .track-card:hover {
@@ -783,6 +852,7 @@ body {
     border-radius: 8px;
     cursor: pointer;
     transition: background var(--transition-normal);
+    animation: cardEnter 0.25s ease both;
 }
 
 .playlist-card:hover {

@@ -57,6 +57,18 @@ class DatabaseBackupService:
             if os.path.exists(self.db_path):
                 local_size = os.path.getsize(self.db_path)
                 backup_size = backup_info.get('file_size', 0)
+                local_mtime = os.path.getmtime(self.db_path)
+
+                # Telegram pinned message contains `date` (unix timestamp). Если backup pinned документ
+                # обновился позже локального файла, то игнорируем локальные "skip" условия и всегда восстанавливаем.
+                backup_date = backup_info.get('date')
+                backup_is_newer = False
+                if backup_date is not None:
+                    try:
+                        backup_ts = float(backup_date)
+                        backup_is_newer = backup_ts > (local_mtime + 1)
+                    except (TypeError, ValueError):
+                        backup_is_newer = False
                 
                 # Проверяем, пуста ли библиотека в текущей БД
                 is_empty = False
@@ -74,8 +86,10 @@ class DatabaseBackupService:
                 elif backup_size > local_size + 1024: # Если бэкап больше хотя бы на 1KB
                     print(f"🔄 Backup in Telegram ({backup_size} bytes) is larger than local DB ({local_size} bytes). Restoring...")
                 else:
-                    print(f"✅ Local database exists and has data. Skipping restoration.")
-                    return False
+                    if not backup_is_newer:
+                        print(f"✅ Local database exists and has data. Skipping restoration.")
+                        return False
+                    print(f"🔄 Backup pinned is newer than local file. Overwriting local DB...")
             
             # Скачиваем backup
             print(f"📥 Downloading database backup from Telegram...")
@@ -138,6 +152,27 @@ class DatabaseBackupService:
                     pin_success = self.storage.pin_message(result['message_id'])
                     if pin_success:
                         print(f"📌 Backup message pinned: {result['message_id']}")
+
+                        # Проверяем, что закрепленный документ действительно соответствует новому бэкапу.
+                        # На некоторых Telegram API/edge случаях закрепление может сработать не мгновенно.
+                        try:
+                            pinned = self.storage.get_pinned_message()
+                            pinned_doc = (pinned or {}).get('document') or {}
+                            pinned_file_id = pinned_doc.get('file_id')
+
+                            if pinned_file_id and pinned_file_id != result['file_id']:
+                                print("⚠️ Pinned document mismatch. Re-pin attempt...")
+                                for _ in range(3):
+                                    await asyncio.sleep(1)
+                                    self.storage.pin_message(result['message_id'])
+                                    pinned = self.storage.get_pinned_message()
+                                    pinned_doc = (pinned or {}).get('document') or {}
+                                    pinned_file_id = pinned_doc.get('file_id')
+                                    if pinned_file_id == result['file_id']:
+                                        print("✅ Pinned document matches new backup after retry")
+                                        break
+                        except Exception as e:
+                            print(f"⚠️ Pinned verification failed: {e}")
                         
                         # Удаляем сервисное сообщение "Сообщение закреплено" (оно обычно идет следующим за закрепом)
                         service_msg_id = result['message_id'] + 1

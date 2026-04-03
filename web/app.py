@@ -83,6 +83,30 @@ def require_auth(fn):
 
     return wrapper
 
+
+def require_admin(fn):
+    """Декоратор для защиты админ-эндпоинтов: требует JWT и флаг `users.is_admin`."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        user_id = getattr(g, "current_user_id", None)
+        if not user_id:
+            return jsonify({"error": "Unauthorized"}), 401
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            is_admin = loop.run_until_complete(db.is_admin(user_id))
+        finally:
+            loop.close()
+
+        if not is_admin:
+            return jsonify({"error": "Forbidden"}), 403
+
+        return fn(*args, **kwargs)
+
+    return wrapper
+
 # ========== Rate limiting (in-memory, per process) ==========
 # В проде на multiple workers это не полностью глобально, но защищает от простого флуда.
 _rate_store = defaultdict(list)  # key -> list[timestamps]
@@ -246,6 +270,96 @@ def index():
     """Главная страница с поддержкой авторизации через параметр auth"""
     auth_token = request.args.get('auth')
     return render_template('index.html', auth_token=auth_token)
+
+
+@app.route('/admin', methods=['GET'])
+@require_admin
+@require_auth
+def admin_page():
+    """Админ-панель (минимальная)."""
+    return render_template('admin.html')
+
+
+@app.route('/admin/api/users', methods=['GET'])
+@require_admin
+@require_auth
+def admin_users():
+    """Список пользователей (только чтение)."""
+    try:
+        limit = int(request.args.get('limit', 50))
+        offset = int(request.args.get('offset', 0))
+        limit = max(1, min(limit, 200))
+        offset = max(0, offset)
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        users = loop.run_until_complete(db.get_users_overview_for_admin(limit=limit, offset=offset))
+        loop.close()
+
+        # JSON-сериализация datetime
+        for u in users:
+            if u.get('last_active') and hasattr(u['last_active'], 'isoformat'):
+                u['last_active'] = u['last_active'].isoformat()
+
+        return jsonify({'users': users})
+    except Exception as e:
+        print(f"❌ Admin users error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/api/tracks', methods=['GET'])
+@require_admin
+@require_auth
+def admin_tracks():
+    """Список треков для админа (только чтение)."""
+    try:
+        limit = int(request.args.get('limit', 50))
+        limit = max(1, min(limit, 200))
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        tracks = loop.run_until_complete(db.get_tracks_overview_for_admin(limit=limit))
+        loop.close()
+
+        return jsonify({'tracks': tracks})
+    except Exception as e:
+        print(f"❌ Admin tracks error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/api/tracks/delete', methods=['POST'])
+@require_admin
+@require_auth
+def admin_delete_track():
+    """Админ: удалить трек (из БД)."""
+    try:
+        data = request.json or {}
+        track_id = data.get('track_id')
+        if not track_id:
+            return jsonify({'error': 'track_id is required'}), 400
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        success = loop.run_until_complete(db.delete_track_for_admin(track_id))
+        loop.close()
+
+        if not success:
+            return jsonify({'error': 'Track not found'}), 404
+
+        # Write-through backup, чтобы изменения пережили redeploy
+        try:
+            backup_svc = get_backup_service()
+            backup_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(backup_loop)
+            backup_loop.run_until_complete(backup_svc.backup_to_telegram(force=True))
+            backup_loop.close()
+        except Exception as e:
+            print(f"⚠️ Admin delete backup failed: {e}")
+
+        return jsonify({'success': True})
+    except Exception as e:
+        print(f"❌ Admin delete track error: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/favicon.ico')
 def favicon():
@@ -774,7 +888,7 @@ def handle_playlists():
                 # Re-using a new loop for backup
                 backup_loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(backup_loop)
-                backup_loop.run_until_complete(backup_service.backup_to_telegram())
+                backup_loop.run_until_complete(backup_service.backup_to_telegram(force=True))
                 backup_loop.close()
             except Exception as e:
                 print(f"⚠️ Backup trigger failed: {e}")
@@ -835,7 +949,7 @@ def add_track_to_playlist():
                 backup_service = get_backup_service()
                 backup_loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(backup_loop)
-                backup_loop.run_until_complete(backup_service.backup_to_telegram())
+                backup_loop.run_until_complete(backup_service.backup_to_telegram(force=True))
                 backup_loop.close()
             except Exception as e:
                 print(f"⚠️ Backup trigger failed: {e}")
@@ -881,6 +995,46 @@ def get_playlist_tracks(playlist_id):
         
     except Exception as e:
         print(f"❌ Get playlist tracks error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/history', methods=['GET'])
+@require_auth
+def get_history():
+    """История скачиваний пользователя (web)"""
+    try:
+        user_id = getattr(g, 'current_user_id', None)
+        if not user_id:
+            return jsonify({'error': 'Unauthorized'}), 401
+
+        # Ленивая подкачка: по умолчанию 10 последних
+        try:
+            limit = int(request.args.get('limit', 10))
+        except (TypeError, ValueError):
+            limit = 10
+        limit = max(1, min(limit, 50))
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        history_items = loop.run_until_complete(db.get_download_history(user_id, limit=limit))
+        loop.close()
+
+        # Приводим к JSON-сериализуемому виду
+        history = []
+        for item in history_items:
+            downloaded_at = item.get('downloaded_at')
+            if downloaded_at and hasattr(downloaded_at, 'isoformat'):
+                downloaded_at = downloaded_at.isoformat()
+
+            history.append({
+                'track': item.get('track'),
+                'downloaded_at': downloaded_at,
+                'quality': item.get('quality'),
+            })
+
+        return jsonify({'history': history})
+    except Exception as e:
+        print(f"❌ Get history error: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/prepare-stream', methods=['POST'])

@@ -4,6 +4,7 @@ let currentTrack = null;
 let searchTimeout = null;
 let resultsData = [];
 let libraryData = [];
+let historyData = [];
 let userData = JSON.parse(localStorage.getItem('userData') || 'null');
 let sessionToken = localStorage.getItem('session_token') || null;
 const audioPlayer = document.getElementById('audioPlayer');
@@ -46,6 +47,122 @@ document.addEventListener('DOMContentLoaded', () => {
         }).catch(err => console.log('Backup request failed:', err));
     });
 });
+
+function renderTrackSkeletons(count = 8) {
+    const items = [];
+    for (let i = 0; i < count; i++) {
+        items.push(`
+            <div class="track-card skeleton-card">
+                <div class="track-image">
+                    <div class="skeleton-img" style="width:100%;height:100%;margin-bottom:0;"></div>
+                </div>
+                <div class="track-info">
+                    <div class="skeleton-row" style="width: 80%;"></div>
+                    <div class="skeleton-row" style="width: 55%;"></div>
+                </div>
+                <div class="track-actions">
+                    <div class="skeleton-row" style="width: 36px; height: 36px; border-radius: 6px; margin: 0;"></div>
+                    <div class="skeleton-row" style="width: 36px; height: 36px; border-radius: 6px; margin: 0; background: rgba(255,255,255,0.08);"></div>
+                </div>
+            </div>
+        `);
+    }
+    return items.join('');
+}
+
+function renderPlaylistsSkeletons(count = 6) {
+    const items = [];
+    for (let i = 0; i < count; i++) {
+        items.push(`
+            <div class="skeleton-card">
+                <div class="skeleton-img"></div>
+                <div class="skeleton-row" style="width: 85%;"></div>
+                <div class="skeleton-row" style="width: 55%;"></div>
+            </div>
+        `);
+    }
+    return items.join('');
+}
+
+function renderHistorySkeletons(count = 8) {
+    const items = [];
+    for (let i = 0; i < count; i++) {
+        items.push(`
+            <div class="history-item" style="opacity:0.9;">
+                <div class="skeleton-img" style="width:40px;height:40px;aspect-ratio:1;margin-bottom:0;"></div>
+                <div style="flex:1;">
+                    <div class="skeleton-row" style="width: 75%; height: 12px; margin-bottom: 8px;"></div>
+                    <div class="skeleton-row" style="width: 55%; height: 10px; margin-bottom: 0;"></div>
+                </div>
+                <div class="skeleton-row" style="width:60px; height: 10px; margin-bottom: 0;"></div>
+            </div>
+        `);
+    }
+    return items.join('');
+}
+
+function renderHistoryItem(item, index) {
+    const downloadedAt = item.downloaded_at ? new Date(item.downloaded_at) : null;
+    const downloadedAtText = downloadedAt && !isNaN(downloadedAt.getTime())
+        ? downloadedAt.toLocaleString()
+        : '';
+
+    const track = item.track || {};
+    const name = track.name || 'Track';
+    const artist = track.artist || '';
+    const quality = item.quality || '';
+
+    return `
+        <div class="history-item" role="button" tabindex="0" onclick="playTrack(null, historyData[${index}])">
+            <div class="track-image" style="width:40px;height:40px;aspect-ratio:1;border-radius:6px;display:flex;align-items:center;justify-content:center;">
+                <svg viewBox="0 0 24 24" fill="currentColor" style="opacity:0.9;">
+                    <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+                </svg>
+            </div>
+            <div style="flex:1; min-width:0;">
+                <div class="track-name" style="font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${name}</div>
+                <div class="track-artist" style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${artist}</div>
+            </div>
+            <div style="text-align:right;">
+                <div style="font-size:12px;color:rgba(255,255,255,0.7);">${quality}</div>
+                <div style="font-size:11px;color:rgba(255,255,255,0.55);">${downloadedAtText}</div>
+            </div>
+        </div>
+    `;
+}
+
+async function loadHistory(limit = 10) {
+    if (!userData) return;
+    if (!sessionToken) {
+        showNotification('Please login first', 'info');
+        return;
+    }
+
+    try {
+        const historyList = document.getElementById('historyList');
+        if (historyList) historyList.innerHTML = renderHistorySkeletons(8);
+
+        const response = await fetch(`/api/history?limit=${limit}`, {
+            headers: { 'Authorization': `Bearer ${sessionToken}` }
+        });
+        const data = await response.json();
+
+        historyData = (data.history || []).map(x => x.track).filter(Boolean);
+
+        if (!historyList) return;
+        if (!data.history || data.history.length === 0) {
+            historyList.innerHTML = '<p style="text-align:center;color: var(--spotify-light-gray); padding: 48px 0;">No history yet</p>';
+            return;
+        }
+
+        historyList.innerHTML = data.history
+            .map((item, idx) => renderHistoryItem(item, idx))
+            .join('');
+    } catch (error) {
+        console.error('Load history error:', error);
+        showNotification('Failed to load history', 'error');
+    }
+}
 
 // View Toggle for Discover Section
 function initializeViewToggle() {
@@ -169,6 +286,10 @@ function initializeNavigation() {
             if (page === 'playlists' && userData) {
                 loadPlaylists();
             }
+
+            if (page === 'history' && userData) {
+                loadHistory();
+            }
         });
     });
 }
@@ -198,6 +319,10 @@ function initializeSearch() {
 
 async function searchTracks(query) {
     try {
+        // Skeleton вместо пустого состояния пока идет запрос
+        const resultsGrid = document.getElementById('resultsGrid');
+        if (resultsGrid) resultsGrid.innerHTML = renderTrackSkeletons(6);
+
         const response = await fetch('/api/search', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -250,9 +375,14 @@ async function syncLibrary() {
 
 async function loadLibrary() {
     try {
+        const libraryGrid = document.getElementById('libraryGrid');
+        const librarySection = document.getElementById('librarySection');
+        if (librarySection) librarySection.style.display = 'block';
+        if (libraryGrid) libraryGrid.innerHTML = renderTrackSkeletons(12);
+
         const response = await fetch('/api/library');
         const data = await response.json();
-        const libraryGrid = document.getElementById('libraryGrid');
+        const libraryGridAfter = document.getElementById('libraryGrid');
 
         if (!data.tracks || data.tracks.length === 0) {
             document.getElementById('librarySection').style.display = 'none';
@@ -260,12 +390,12 @@ async function loadLibrary() {
         }
 
         document.getElementById('librarySection').style.display = 'block';
-        libraryGrid.innerHTML = '';
+        libraryGridAfter.innerHTML = '';
         libraryData = data.tracks;
 
         data.tracks.forEach((track, index) => {
             const card = renderTrackCard(track, index, 'library');
-            libraryGrid.innerHTML += card;
+            libraryGridAfter.innerHTML += card;
         });
     } catch (error) {
         console.error('Load library error:', error);
@@ -551,6 +681,9 @@ async function loadPlaylists() {
         return;
     }
     try {
+        const grid = document.getElementById('playlistsGrid');
+        if (grid) grid.innerHTML = renderPlaylistsSkeletons(6);
+
         const response = await fetch('/api/playlists', {
             headers: {
                 'Authorization': `Bearer ${sessionToken}`

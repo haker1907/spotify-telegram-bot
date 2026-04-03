@@ -64,6 +64,17 @@ python bot.py
 - Преобразуйте `cookies.txt` в base64 и задайте переменную `YOUTUBE_COOKIES_BASE64` в Railway (одно значение, без переносов).
 - Сделайте redeploy после обновления cookies.
 
+#### Быстрый runbook (Windows + Railway)
+1. Откройте Firefox, зайдите в `youtube.com` под нужным аккаунтом, затем закройте Firefox.
+2. В корне проекта выполните:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\scripts\rotate_cookies.ps1
+   ```
+3. Скопируйте выведенное значение и вставьте в Railway env: `YOUTUBE_COOKIES_BASE64`.
+4. Перезапустите сервис (redeploy).
+
+> Почему Firefox: Chrome 127+ использует app-bound encryption, поэтому внешние скрипты/библиотеки часто не могут стабильно извлекать cookies.
+
 ### Rate limits (in-memory)
 - `DOWNLOAD_RATE_LIMIT`, `DOWNLOAD_RATE_PERIOD_SECONDS`
 - `PREPARE_STREAM_RATE_LIMIT`, `PREPARE_STREAM_RATE_PERIOD_SECONDS`

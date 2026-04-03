@@ -1,5 +1,6 @@
 import os
 import asyncio
+import base64
 from typing import Optional, Dict
 import yt_dlp
 import httpx
@@ -33,15 +34,21 @@ class DownloadService:
             print(f"ℹ️ YouTube API not available: {e}")
         
         # Проверяем переменную окружения для Railway деплоя
-        import base64
         cookies_env = os.getenv('YOUTUBE_COOKIES_BASE64')
         if cookies_env:
             try:
-                # Очищаем от пробелов и переносов (частая ошибка при копировании)
-                cookies_env = cookies_env.strip().replace('\n', '').replace('\r', '')
+                # Очищаем от пробелов/переносов и возможных обрамляющих кавычек.
+                # В Railway переменную часто вставляют как строку в кавычках.
+                cookies_env = cookies_env.strip().strip('"').strip("'")
+                cookies_env = cookies_env.replace('\n', '').replace('\r', '')
                 
                 print(f"📦 Attempting to restore cookies from YOUTUBE_COOKIES_BASE64...")
-                cookies_content = base64.b64decode(cookies_env).decode('utf-8')
+                try:
+                    cookies_content = base64.b64decode(cookies_env, validate=True).decode('utf-8')
+                except Exception:
+                    # Fallback для urlsafe base64 и неполного padding
+                    padded = cookies_env + ("=" * (-len(cookies_env) % 4))
+                    cookies_content = base64.urlsafe_b64decode(padded).decode('utf-8')
                 
                 # Простая проверка формата (должен начинаться с # Netscape или содержать HTTP Cookie)
                 is_netscape = cookies_content.startswith('# Netscape') or '# HTTP' in cookies_content[:100]
@@ -371,13 +378,22 @@ class DownloadService:
             for player_client in (['default'], ['web'], ['web_embedded']):
                 attempt_opts = copy.deepcopy(ydl_opts)
                 attempt_opts['default_search'] = None
-                attempt_opts['cookiefile'] = None
-                attempt_opts.pop('cookiesfrombrowser', None)
                 attempt_opts['extractor_args']['youtube']['player_client'] = player_client
                 result = await loop.run_in_executor(None, self._download_sync, candidate_url, attempt_opts, file_format)
                 if result and result.get('file_path'):
                     return result
                 last_result = result
+
+                # Если с cookies не удалось, пробуем тот же client без cookies.
+                # Это оставляет шанс на успех в локальной среде, но не ломает Railway-кейс.
+                if self._is_blocked(result):
+                    no_cookie_opts = copy.deepcopy(attempt_opts)
+                    no_cookie_opts['cookiefile'] = None
+                    no_cookie_opts.pop('cookiesfrombrowser', None)
+                    no_cookie_res = await loop.run_in_executor(None, self._download_sync, candidate_url, no_cookie_opts, file_format)
+                    if no_cookie_res and no_cookie_res.get('file_path'):
+                        return no_cookie_res
+                    last_result = no_cookie_res
 
         return last_result
 

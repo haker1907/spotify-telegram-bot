@@ -365,6 +365,30 @@ def admin_tracks():
         tracks = loop.run_until_complete(db.get_tracks_overview_for_admin(limit=limit))
         loop.close()
 
+        # Подтягиваем обложки "на лету" (как в Discover) для треков без image.
+        # Важно: делаем это ограниченно, чтобы не тормозить админку на больших лимитах.
+        missing = [t for t in (tracks or []) if not t.get('image') and t.get('spotify_url')]
+        missing = missing[:20]  # safety cap per request
+        if missing:
+            async def _enrich(items: list[dict]):
+                sem = asyncio.Semaphore(5)
+
+                async def one(t: dict):
+                    url = t.get('spotify_url')
+                    if not url:
+                        return
+                    async with sem:
+                        info = await spotify_service.get_track_info_from_url(url)
+                        if info and info.get('image_url'):
+                            t['image'] = info.get('image_url')
+
+                await asyncio.gather(*(one(t) for t in items), return_exceptions=True)
+
+            enrich_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(enrich_loop)
+            enrich_loop.run_until_complete(_enrich(missing))
+            enrich_loop.close()
+
         return jsonify({'tracks': tracks})
     except Exception as e:
         print(f"❌ Admin tracks error: {e}")

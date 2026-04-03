@@ -679,6 +679,8 @@ class DatabaseManager:
                     "id": t.id,
                     "name": t.name,
                     "artist": t.artist,
+                    # Для унификации с веб-рендером (Discover/Library) используем ключ `image`
+                    "image": getattr(t, "image_url", None),
                     "download_count": t.download_count,
                     "spotify_url": t.spotify_url,
                 }

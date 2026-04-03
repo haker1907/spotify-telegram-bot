@@ -31,6 +31,60 @@
             margin-bottom: 12px;
             font-size: 18px;
         }
+        .admin-card-title-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .admin-card-title-row h2 {
+            margin: 0;
+        }
+        .admin-view-toggle {
+            display: flex;
+            background: var(--spotify-gray);
+            border-radius: 6px;
+            padding: 4px;
+            gap: 4px;
+        }
+        .admin-view-toggle button {
+            background: transparent;
+            border: none;
+            color: var(--spotify-light-gray);
+            padding: 6px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 700;
+            font-size: 12px;
+        }
+        .admin-view-toggle button.active {
+            background: #333;
+            color: var(--spotify-white);
+        }
+        .admin-track-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+        .admin-track-meta {
+            font-size: 12px;
+            opacity: .75;
+            margin-top: 6px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .admin-track-meta a {
+            color: rgba(255,255,255,0.75);
+            text-decoration: none;
+        }
+        .admin-track-meta a:hover {
+            text-decoration: underline;
+            color: #fff;
+        }
         .admin-row {
             display: flex;
             gap: 12px;
@@ -82,12 +136,22 @@
         </div>
 
         <div class="admin-card">
-            <h2>Users</h2>
+            <div class="admin-card-title-row">
+                <h2>Users</h2>
+            </div>
             <div id="usersList"></div>
         </div>
 
         <div class="admin-card">
-            <h2>Tracks</h2>
+            <div class="admin-card-title-row">
+                <h2>Tracks</h2>
+                <div class="admin-track-actions">
+                    <div class="admin-view-toggle" id="tracksViewToggle" title="View">
+                        <button type="button" class="active" data-view="grid">Grid</button>
+                        <button type="button" data-view="list">List</button>
+                    </div>
+                </div>
+            </div>
             <div id="tracksList"></div>
         </div>
     </div>
@@ -142,34 +206,42 @@
                 tracksList.innerHTML = '<div style="opacity:0.8;">No tracks</div>';
                 return;
             }
-            const rows = tracks.map(t => `
-                <tr>
-                    <td class="mono">${t.id}</td>
-                    <td>${t.name || ''}</td>
-                    <td>${t.artist || ''}</td>
-                    <td>${t.download_count}</td>
-                    <td class="mono" style="word-break: break-word;">${t.spotify_url || ''}</td>
-                    <td>
-                        <button class="admin-btn" style="padding:8px 10px;" onclick="deleteTrack('${t.id}')">Delete</button>
-                    </td>
-                </tr>
-            `).join('');
+            const cards = tracks.map(t => {
+                const safeId = String(t.id || '').replace(/"/g, '&quot;');
+                const safeName = String(t.name || '').replace(/"/g, '&quot;');
+                const safeArtist = String(t.artist || '').replace(/"/g, '&quot;');
 
-            tracksList.innerHTML = `
-                <table class="admin-table">
-                    <thead>
-                        <tr>
-                            <th>Track ID</th>
-                            <th>Name</th>
-                            <th>Artist</th>
-                            <th>Downloads</th>
-                            <th>Spotify URL</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>${rows}</tbody>
-                </table>
-            `;
+                const img = t.image
+                    ? `<img loading="lazy" decoding="async" src="${t.image}" alt="${safeName}" />`
+                    : `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>`;
+
+                const url = t.spotify_url ? String(t.spotify_url) : '';
+                const urlHtml = url ? `<a href="${url}" target="_blank" rel="noreferrer">Spotify</a>` : '';
+
+                return `
+                    <div class="track-card" data-track-id="${safeId}">
+                        <div class="track-image">${img}</div>
+                        <div class="track-info">
+                            <div class="track-name" title="${safeName}">${t.name || ''}</div>
+                            <div class="track-artist" title="${safeArtist}">${t.artist || ''}</div>
+                            <div class="admin-track-meta">
+                                <span title="Downloads">⬇ ${t.download_count ?? 0}</span>
+                                <span class="mono" title="Track ID">${t.id || ''}</span>
+                                ${urlHtml ? `<span>${urlHtml}</span>` : ``}
+                            </div>
+                        </div>
+                        <div class="track-actions">
+                            <button class="action-btn secondary" title="Delete" onclick="deleteTrack('${safeId}')">
+                                <svg viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M6 7h12l-1 14H7L6 7zm3-3h6l1 2H8l1-2z"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            tracksList.innerHTML = `<div class="results-grid" id="adminTracksGrid">${cards}</div>`;
         }
 
         async function apiGet(path) {
@@ -234,6 +306,20 @@
 
         loadAdmin();
         refreshBtn.addEventListener('click', loadAdmin);
+
+        // View toggle (grid/list) для треков как в Discover
+        const tracksViewToggle = document.getElementById('tracksViewToggle');
+        tracksViewToggle?.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-view]');
+            if (!btn) return;
+            const view = btn.dataset.view;
+            tracksViewToggle.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const grid = document.getElementById('adminTracksGrid');
+            if (!grid) return;
+            if (view === 'list') grid.classList.add('list-view');
+            else grid.classList.remove('list-view');
+        });
     </script>
 </body>
 </html>

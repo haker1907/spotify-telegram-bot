@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 import jwt
 import time
 from collections import defaultdict
+import requests
 
 # Добавляем корневую директорию в путь для импорта модулей
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -41,6 +42,47 @@ db = DatabaseManager()
 # Настройки сессионных токенов (JWT)
 SESSION_SECRET = os.getenv("WEB_SESSION_SECRET") or os.getenv("TELEGRAM_BOT_TOKEN") or "dev-insecure-session-secret"
 SESSION_TTL_SECONDS = int(os.getenv("WEB_SESSION_TTL", "2592000"))  # 30 дней по умолчанию
+
+
+def get_telegram_avatar_url(user_id: int) -> str | None:
+    """
+    Получить URL аватарки пользователя из Telegram Bot API.
+    Возвращает прямую ссылку на файл или None, если фото недоступно.
+    """
+    try:
+        bot_token = getattr(config, "TELEGRAM_BOT_TOKEN", None)
+        if not bot_token:
+            return None
+
+        base = f"https://api.telegram.org/bot{bot_token}"
+        resp = requests.get(
+            f"{base}/getUserProfilePhotos",
+            params={"user_id": int(user_id), "limit": 1},
+            timeout=6,
+        )
+        data = resp.json() if resp.ok else {}
+        photos = (data or {}).get("result", {}).get("photos", [])
+        if not photos:
+            return None
+
+        # Берём самое большое изображение из первого набора размеров
+        sizes = photos[0] or []
+        if not sizes:
+            return None
+        file_id = (sizes[-1] or {}).get("file_id")
+        if not file_id:
+            return None
+
+        resp2 = requests.get(f"{base}/getFile", params={"file_id": file_id}, timeout=6)
+        data2 = resp2.json() if resp2.ok else {}
+        file_path = (data2 or {}).get("result", {}).get("file_path")
+        if not file_path:
+            return None
+
+        return f"https://api.telegram.org/file/bot{bot_token}/{file_path}"
+    except Exception as e:
+        print(f"⚠️ Avatar fetch failed for user {user_id}: {e}")
+        return None
 
 
 def create_session_token(user_id: int) -> str:
@@ -857,7 +899,8 @@ def authenticate():
                 'id': user.id,
                 'username': user.username or 'User',
                 'first_name': user.first_name,
-                'last_name': user.last_name
+                'last_name': user.last_name,
+                'avatar_url': get_telegram_avatar_url(user.id)
             }
         })
         # Храним токен только в HttpOnly cookie, а не в localStorage
@@ -895,7 +938,8 @@ def get_me():
                 'id': user.id,
                 'username': user.username or 'User',
                 'first_name': user.first_name,
-                'last_name': user.last_name
+                'last_name': user.last_name,
+                'avatar_url': get_telegram_avatar_url(user.id)
             }
         })
     except Exception as e:

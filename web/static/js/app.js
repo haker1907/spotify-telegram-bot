@@ -23,6 +23,7 @@ let isRepeatEnabled = false;
 let isShuffleEnabled = false;
 let currentPlaylist = [];
 let currentTrackIndex = -1;
+let currentCardPlayBtn = null;
 
 // Initialize app
 document.addEventListener('DOMContentLoaded', () => {
@@ -289,14 +290,34 @@ function updateUserUI() {
     const userInfo = document.getElementById('userInfo');
     const loginBtn = document.getElementById('loginBtn');
     const displayUsername = document.getElementById('displayUsername');
+    const userAvatar = document.getElementById('userAvatar');
 
     if (userData) {
         userInfo.style.display = 'flex';
         loginBtn.style.display = 'none';
         displayUsername.textContent = userData.first_name || userData.username;
+
+        if (userAvatar) {
+            const avatarUrl = userData.avatar_url;
+            if (avatarUrl) {
+                userAvatar.innerHTML = `<img src="${avatarUrl}" alt="Avatar" referrerpolicy="no-referrer" />`;
+            } else {
+                // Fallback: встроенная иконка из шаблона
+                if (!userAvatar.querySelector('svg')) {
+                    userAvatar.innerHTML = `
+                        <svg viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                        </svg>
+                    `;
+                }
+            }
+        }
     } else {
         userInfo.style.display = 'none';
         loginBtn.style.display = 'block';
+        if (userAvatar) {
+            // Оставляем дефолтную иконку (она уже в HTML)
+        }
     }
 }
 
@@ -512,7 +533,7 @@ function renderTrackCard(track, index, type = 'search') {
                 <div class="track-artist" title="${track.artist}">${track.artist}</div>
             </div>
             <div class="track-actions">
-                <button class="action-btn" onclick="playTrack(this)">
+                <button class="action-btn play-track-btn" onclick="playTrack(this)">
                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
                 </button>
                 <button class="action-btn secondary" onclick="openDownloadModal(this)">
@@ -534,6 +555,12 @@ async function playTrack(button, trackData = null) {
         // Called from playNext/playPrevious
         track = trackData;
     } else {
+        // Toggle pause/resume for the same card button
+        if (button && currentCardPlayBtn === button && !audioPlayer.paused) {
+            audioPlayer.pause();
+            return;
+        }
+
         // Called from UI button click
         const card = button.closest('.track-card');
         index = parseInt(card.dataset.index);
@@ -546,6 +573,13 @@ async function playTrack(button, trackData = null) {
     }
 
     if (!track) return;
+
+    if (button && currentCardPlayBtn && currentCardPlayBtn !== button) {
+        setCardPlayButtonState(currentCardPlayBtn, false);
+    }
+    if (button) {
+        currentCardPlayBtn = button;
+    }
 
     // Сначала пробуем Spotify preview (30 секунд)
     if (track.preview_url) {
@@ -656,6 +690,16 @@ function initializePlayer() {
         totalTimeEl.textContent = formatTime(audioPlayer.duration);
     });
 
+    // Синхронизация иконок плеера/карточки с реальным состоянием аудио
+    audioPlayer.addEventListener('play', () => {
+        updatePlayButton(true);
+        if (currentCardPlayBtn) setCardPlayButtonState(currentCardPlayBtn, true);
+    });
+    audioPlayer.addEventListener('pause', () => {
+        updatePlayButton(false);
+        if (currentCardPlayBtn) setCardPlayButtonState(currentCardPlayBtn, false);
+    });
+
     // Перемотка
     progressSlider.addEventListener('input', (e) => {
         const time = (e.target.value / 100) * audioPlayer.duration;
@@ -691,6 +735,13 @@ function updatePlayButton(isPlaying) {
     document.getElementById('playBtn').innerHTML = isPlaying ?
         `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg>` :
         `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>`;
+}
+
+function setCardPlayButtonState(button, isPlaying) {
+    if (!button) return;
+    button.innerHTML = isPlaying
+        ? `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg>`
+        : `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`;
 }
 
 // Player control functions

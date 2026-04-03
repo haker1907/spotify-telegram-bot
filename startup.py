@@ -56,6 +56,18 @@ async def pre_startup_db_init():
             # 2. Инициализация схемы и WAL mode
             print("📦 [INIT] Ensuring database schema and WAL mode...", flush=True)
             await db.init_db()
+
+            # 3. Автоматический backup на каждом деплое/старте контейнера.
+            # Это фиксирует актуальное состояние в Telegram-канале
+            # (включая изменения из web и bot), чтобы переживать redeploy.
+            auto_backup_on_start = os.getenv("AUTO_BACKUP_ON_STARTUP", "true").strip().lower() in ("1", "true", "yes", "on")
+            if auto_backup_on_start:
+                try:
+                    print("💾 [INIT] Creating deploy-start database backup to Telegram...", flush=True)
+                    await backup_service.backup_to_telegram(force=True)
+                except Exception as backup_err:
+                    # Не блокируем запуск сервиса, если backup временно недоступен
+                    print(f"⚠️  [INIT] Startup backup failed (non-fatal): {backup_err}", flush=True)
             
             # Закрываем соединение, так как воркеры откроют свои
             await db.close()

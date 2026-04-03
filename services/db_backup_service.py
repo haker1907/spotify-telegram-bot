@@ -254,8 +254,11 @@ class DatabaseBackupService:
                         'date': message.get('date')
                     }
             
-            # 2. ФАЛЛБЭК: Если закрепа нет, поищем в последних сообщениях чрез DeepSync-подобный механизм
-            print("🔍 No valid backup in pinned message. Scanning last 100 messages for backups...")
+            # 2. ФАЛЛБЭК: Если закрепа нет, ищем в последних сообщениях через DeepSync-подобный механизм.
+            # На "шумных" каналах 100 сообщений часто недостаточно.
+            scan_depth = int(os.getenv("BACKUP_RESTORE_SCAN_DEPTH", "2000"))
+            scan_depth = max(100, min(scan_depth, 10000))
+            print(f"🔍 No valid backup in pinned message. Scanning last {scan_depth} messages for backups...")
             
             # Нам нужно получить текущий ID головы канала
             head_id = 0
@@ -276,14 +279,21 @@ class DatabaseBackupService:
                 pass
             
             if head_id > 0:
+                bot_id = None
+                try:
+                    bot_info = httpx.get(f"{self.storage.base_url}/getMe").json()
+                    bot_id = bot_info.get('result', {}).get('id')
+                except Exception:
+                    bot_id = None
+
+                if not bot_id:
+                    print("⚠️ Could not resolve bot_id for backup scan")
+                    return None
+
                 # Сканируем назад
-                for msg_id in range(head_id, max(0, head_id - 100), -1):
+                for msg_id in range(head_id, max(0, head_id - scan_depth), -1):
                     # Используем forwardMessage для проверки содержимого (трюк DeepSync)
                     try:
-                        # Получаем ID бота для форварда самому себе
-                        bot_info = httpx.get(f"{self.storage.base_url}/getMe").json()
-                        bot_id = bot_info.get('result', {}).get('id')
-                        
                         resp = httpx.post(f"{self.storage.base_url}/forwardMessage", data={
                             'chat_id': bot_id,
                             'from_chat_id': self.storage.channel_id,

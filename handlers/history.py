@@ -67,6 +67,11 @@ async def clear_history_command(update: Update, context: ContextTypes.DEFAULT_TY
     try:
         # TODO: Реализовать метод clear_download_history в db_manager
         await db.clear_download_history(user_id)
+
+        # Write-through backup, чтобы очистка истории не потерялась при redeploy
+        backup_service = context.bot_data.get('backup_service')
+        if backup_service:
+            context.application.create_task(backup_service.backup_to_telegram(force=True))
         
         await update.message.reply_text(
             get_string("history_cleared", lang),

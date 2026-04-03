@@ -569,6 +569,27 @@ class DatabaseManager:
         async with self.async_session() as session:
             result = await session.execute(select(BackupLog).limit(1))
             return result.scalar_one_or_none() is None
+
+    async def has_meaningful_data(self) -> bool:
+        """
+        Проверить, что в БД есть пользовательские данные, которые важно бэкапить.
+        Используется на старте, чтобы не закреплять пустую БД как новый backup.
+        """
+        async with self.async_session() as session:
+            playlist_count = await session.scalar(select(func.count()).select_from(Playlist))
+            history_count = await session.scalar(select(func.count()).select_from(DownloadHistory))
+            favorite_count = await session.scalar(select(func.count()).select_from(Favorite))
+            tg_files_count = await session.scalar(select(func.count()).select_from(TelegramFile))
+            track_cache_count = await session.scalar(select(func.count()).select_from(TrackCache))
+
+            total = (
+                int(playlist_count or 0)
+                + int(history_count or 0)
+                + int(favorite_count or 0)
+                + int(tg_files_count or 0)
+                + int(track_cache_count or 0)
+            )
+            return total > 0
             
     async def get_user_quality(self, user_id: int) -> str:
         """Получить предпочитаемое качество пользователя"""

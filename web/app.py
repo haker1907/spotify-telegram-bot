@@ -711,6 +711,8 @@ def download():
                             file_size=result.get('file_size', 0)
                         )
                     )
+                    backup_svc = get_backup_service()
+                    loop.run_until_complete(backup_svc.backup_to_telegram())
                 except Exception as reg_e:
                     print(f"⚠️ Warning: Registration in discovery failed: {reg_e}")
                 return send_file(
@@ -796,6 +798,8 @@ def download():
                         file_size=result.get('file_size', 0)
                     )
                 )
+                backup_svc = get_backup_service()
+                loop.run_until_complete(backup_svc.backup_to_telegram())
             except Exception as reg_e:
                 print(f"⚠️ Warning: Registration in discovery failed: {reg_e}")
 

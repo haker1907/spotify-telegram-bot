@@ -200,6 +200,9 @@ async def handle_spotify_link(update: Update, context: ContextTypes.DEFAULT_TYPE
                 if db:
                     history_quality = f"{quality} kbps" if file_format == 'mp3' else f"Hi-Res FLAC ({quality} kbps)"
                     await db.add_download_to_history(user_id, track_id, history_quality, 0)
+                    backup_service = context.bot_data.get('backup_service')
+                    if backup_service:
+                        context.application.create_task(backup_service.backup_to_telegram())
                 
                 return
             except Exception as e:
@@ -341,6 +344,9 @@ async def handle_spotify_link(update: Update, context: ContextTypes.DEFAULT_TYPE
                     file_size = result.get('file_size', 0)
                     history_quality = f"{quality} kbps" if file_format == 'mp3' else f"Hi-Res FLAC ({quality} kbps)"
                     await db.add_download_to_history(user_id, track_id, history_quality, file_size)
+                    backup_service = context.bot_data.get('backup_service')
+                    if backup_service:
+                        context.application.create_task(backup_service.backup_to_telegram())
             
             # Удаляем статусное сообщение
             await status_msg.delete()

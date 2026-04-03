@@ -264,6 +264,9 @@ async def download_track(query, context, callback_data, lang="ru"):
                 if db:
                     history_quality = f"{quality} kbps" if file_format == 'mp3' else f"Hi-Res FLAC ({quality} kbps)"
                     await db.add_download_to_history(query.from_user.id, track_id, history_quality, 0)
+                    backup_service = context.bot_data.get('backup_service')
+                    if backup_service:
+                        context.application.create_task(backup_service.backup_to_telegram())
                 return
             except Exception as e:
                 print(f"❌ Ошибка отправки из кэша: {e}")
@@ -369,6 +372,9 @@ async def download_track(query, context, callback_data, lang="ru"):
             file_size = result.get('file_size', 0)
             history_quality = f"{quality} kbps" if file_format == 'mp3' else "Lossless (FLAC)"
             await db.add_download_to_history(query.from_user.id, track.id, history_quality, file_size)
+            backup_service = context.bot_data.get('backup_service')
+            if backup_service:
+                context.application.create_task(backup_service.backup_to_telegram())
             
         # Удаляем скачанный файл
         download_service.cleanup_file(result['file_path'])

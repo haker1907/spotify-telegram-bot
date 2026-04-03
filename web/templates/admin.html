@@ -93,8 +93,6 @@
     </div>
 
     <script>
-        const sessionToken = localStorage.getItem('session_token');
-
         const usersList = document.getElementById('usersList');
         const tracksList = document.getElementById('tracksList');
         const refreshBtn = document.getElementById('refreshBtn');
@@ -175,9 +173,8 @@
         }
 
         async function apiGet(path) {
-            if (!sessionToken) throw new Error('No session token');
             const res = await fetch(path, {
-                headers: { 'Authorization': `Bearer ${sessionToken}` }
+                credentials: 'same-origin'
             });
             const data = await res.json();
             if (!res.ok) {
@@ -218,9 +215,9 @@
                 const res = await fetch('/admin/api/tracks/delete', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${sessionToken}`
+                        'Content-Type': 'application/json'
                     },
+                    credentials: 'same-origin',
                     body: JSON.stringify({ track_id: trackId })
                 });
                 const data = await res.json();
@@ -235,13 +232,8 @@
             }
         }
 
-        if (!sessionToken) {
-            showMsg('Please login in the web app first.');
-            refreshBtn.disabled = true;
-        } else {
-            loadAdmin();
-            refreshBtn.addEventListener('click', loadAdmin);
-        }
+        loadAdmin();
+        refreshBtn.addEventListener('click', loadAdmin);
     </script>
 </body>
 </html>

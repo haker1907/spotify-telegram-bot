@@ -298,7 +298,6 @@ body {
 
 .track-image {
     width: 56px;
-    height: 56px;
     background: var(--spotify-dark);
     border-radius: 4px;
     display: flex;

@@ -59,10 +59,14 @@ def require_auth(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            return jsonify({"error": "Unauthorized"}), 401
-
-        token = auth_header.split(" ", 1)[1].strip()
+        token = None
+        if auth_header.startswith("Bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+        else:
+            # Secure fallback: HttpOnly cookie session
+            token = request.cookies.get("session_token")
+            if not token:
+                return jsonify({"error": "Unauthorized"}), 401
         try:
             data = jwt.decode(token, SESSION_SECRET, algorithms=["HS256"])
         except jwt.ExpiredSignatureError:
@@ -845,9 +849,46 @@ def authenticate():
         if not user:
             return jsonify({'error': 'Invalid or expired token'}), 401
 
-        # Создаём короткоживущую веб-сессию (JWT)
+        # Создаём веб-сессию (JWT)
         session_token = create_session_token(user.id)
+        resp = jsonify({
+            'success': True,
+            'user': {
+                'id': user.id,
+                'username': user.username or 'User',
+                'first_name': user.first_name,
+                'last_name': user.last_name
+            }
+        })
+        # Храним токен только в HttpOnly cookie, а не в localStorage
+        cookie_secure_env = os.getenv("WEB_COOKIE_SECURE", "auto").strip().lower()
+        secure_cookie = request.is_secure if cookie_secure_env == "auto" else cookie_secure_env in ("1", "true", "yes", "on")
+        resp.set_cookie(
+            "session_token",
+            session_token,
+            max_age=SESSION_TTL_SECONDS,
+            httponly=True,
+            secure=secure_cookie,
+            samesite="Lax",
+            path="/",
+        )
+        return resp
+    except Exception as e:
+        print(f"❌ Auth error: {e}")
+        return jsonify({'error': str(e)}), 500
 
+@app.route('/api/me', methods=['GET'])
+@require_auth
+def get_me():
+    """Текущий пользователь по cookie/JWT-сессии."""
+    try:
+        user_id = getattr(g, 'current_user_id', None)
+        if not user_id:
+            return jsonify({'error': 'Unauthorized'}), 401
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        user = loop.run_until_complete(db.get_or_create_user(user_id))
+        loop.close()
         return jsonify({
             'success': True,
             'user': {
@@ -855,11 +896,10 @@ def authenticate():
                 'username': user.username or 'User',
                 'first_name': user.first_name,
                 'last_name': user.last_name
-            },
-            'session_token': session_token
+            }
         })
     except Exception as e:
-        print(f"❌ Auth error: {e}")
+        print(f"❌ Me error: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/playlists', methods=['GET', 'POST'])

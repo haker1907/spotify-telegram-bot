@@ -289,19 +289,6 @@
 
     <audio id="audioPlayer" style="display: none;"></audio>
     <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
-    <script>
-        // Автоавторизация если есть токен в URL
-        const urlParams = new URLSearchParams(window.location.search);
-        const authToken = urlParams.get('auth');
-
-        if (authToken) {
-            // Сохраняем токен в localStorage
-            localStorage.setItem('auth_token', authToken);
-            // Удаляем параметр auth из URL чтобы не было видно в адресной строке
-            window.history.replaceState({}, document.title, window.location.pathname);
-            console.log('✅ Токен авторизации получен');
-        }
-    </script>
     <script src="{{ url_for('static', filename='js/modules/ui.js') }}"></script>
     <script src="{{ url_for('static', filename='js/modules/infinite-scroll.js') }}"></script>
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>

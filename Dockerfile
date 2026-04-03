@@ -5,11 +5,12 @@ FROM python:3.10-slim
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1
 
-# ffmpeg для конвертации аудио; --no-install-recommends ускоряет сборку и уменьшает образ
-# Node.js не нужен yt-dlp для типичного YouTube; при необходимости верните: nodejs
+# ffmpeg для конвертации аудио + nodejs как JS runtime для yt-dlp
+# (нужен для YouTube n/sig challenge solving)
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Копируем файл зависимостей

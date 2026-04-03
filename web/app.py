@@ -273,16 +273,16 @@ def index():
 
 
 @app.route('/admin', methods=['GET'])
-@require_admin
 @require_auth
+@require_admin
 def admin_page():
     """Админ-панель (минимальная)."""
     return render_template('admin.html')
 
 
 @app.route('/admin/api/users', methods=['GET'])
-@require_admin
 @require_auth
+@require_admin
 def admin_users():
     """Список пользователей (только чтение)."""
     try:
@@ -308,8 +308,8 @@ def admin_users():
 
 
 @app.route('/admin/api/tracks', methods=['GET'])
-@require_admin
 @require_auth
+@require_admin
 def admin_tracks():
     """Список треков для админа (только чтение)."""
     try:
@@ -328,8 +328,8 @@ def admin_tracks():
 
 
 @app.route('/admin/api/tracks/delete', methods=['POST'])
-@require_admin
 @require_auth
+@require_admin
 def admin_delete_track():
     """Админ: удалить трек (из БД)."""
     try:

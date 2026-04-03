@@ -116,6 +116,42 @@ class DownloadService:
             opts['cookiefile'] = self.cookies_path
 
         return opts
+
+    def _is_youtube_sign_in_error(self, err: str) -> bool:
+        e = (err or "").lower()
+        return (
+            ("sign in" in e and "bot" in e)
+            or "confirm you're not a bot" in e
+            or "sign in to confirm" in e
+        )
+
+    def _cookie_hint_suffix(self) -> str:
+        has_file = os.path.exists(self.cookies_path)
+        has_env = bool(os.getenv("YOUTUBE_COOKIES_BASE64"))
+        if not has_file and not has_env:
+            prefix = " Сейчас нет cookies.txt и не задана YOUTUBE_COOKIES_BASE64. "
+        else:
+            prefix = " Cookies могли устареть — экспортируйте заново. "
+        return (
+            prefix
+            + "На сервере (Railway) браузерных cookies нет — используйте Netscape cookies.txt "
+            "в переменной YOUTUBE_COOKIES_BASE64 (base64). См. "
+            "https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp"
+        )
+
+    def _polish_error(self, res: Optional[Dict]) -> Optional[Dict]:
+        """Добавляет подсказку к типичной ошибке YouTube «not a bot»."""
+        if not res or not isinstance(res, dict):
+            return res
+        err = res.get("error")
+        if err is None:
+            return res
+        err_s = str(err)
+        if "yt-dlp/wiki" in err_s and "YOUTUBE_COOKIES_BASE64" in err_s:
+            return res
+        if not self._is_youtube_sign_in_error(err_s):
+            return res
+        return {**res, "error": err_s + " | " + self._cookie_hint_suffix()}
         
     def _get_ffmpeg_args(self, quality: str, file_format: str) -> list:
         """Получить аргументы ffmpeg на основе качества и формата"""
@@ -163,7 +199,7 @@ class DownloadService:
             return await self._download_with_rotation(download_target, search_query, ydl_opts, file_format, youtube_url)
         except Exception as e:
             print(f"❌ Ошибка в search_and_download: {e}")
-            return {'error': str(e)}
+            return self._polish_error({'error': str(e)})
 
     def _get_base_ydl_opts(self, artist: str, track_name: str, quality: str, file_format: str, ffmpeg_args: list) -> dict:
         """
@@ -279,7 +315,7 @@ class DownloadService:
             if candidate_result and candidate_result.get('file_path'):
                 return candidate_result
     
-        return result   
+        return self._polish_error(result)
 
     def _is_blocked(self, res: Optional[Dict]) -> bool:
         """Определить, что ошибка связана с блокировкой/недоступностью источника."""
@@ -635,15 +671,15 @@ class DownloadService:
         try:
             # ИСПОЛЬЗУЕМ РОТАЦИЮ, ЧТОБЫ БЫЛ ФОЛЛБЕК БЕЗ КУК!
             return await self._download_with_rotation(
-                download_target=search_query, 
-                search_query=search_query, 
-                ydl_opts=ydl_opts, 
+                download_target=search_query,
+                search_query=search_query,
+                ydl_opts=ydl_opts,
                 file_format=file_format,
-                youtube_url=None
+                youtube_url=None,
             )
         except Exception as e:
             print(f"❌ Ошибка скачивания {search_query}: {e}")
-            return {'error': str(e)}
+            return self._polish_error({'error': str(e)})
     
     async def get_youtube_url(self, artist: str, track_name: str) -> Optional[str]:
         """

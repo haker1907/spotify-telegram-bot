@@ -5,6 +5,7 @@ import logging
 import asyncio
 import threading
 import re
+import time
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -291,10 +292,21 @@ def main():
 
 
 if __name__ == '__main__':
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\n\n👋 Бот остановлен пользователем")
-    except Exception as e:
-        logger.error(f"❌ Критическая ошибка: {e}", exc_info=True)
-        print(f"\n❌ Ошибка: {e}")
+    from telegram.error import NetworkError
+
+    retry_delay = 10
+    while True:
+        try:
+            main()
+            break
+        except KeyboardInterrupt:
+            print("\n\n👋 Бот остановлен пользователем")
+            break
+        except NetworkError as e:
+            logger.warning(f"🌐 Сетевая ошибка Telegram API: {e}. Повтор через {retry_delay} сек...")
+            print(f"\n⚠️ Временная ошибка Telegram API: {e}. Повтор через {retry_delay} сек...")
+            time.sleep(retry_delay)
+        except Exception as e:
+            logger.error(f"❌ Критическая ошибка: {e}", exc_info=True)
+            print(f"\n❌ Ошибка: {e}")
+            break

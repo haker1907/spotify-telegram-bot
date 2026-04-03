@@ -511,6 +511,30 @@ body {
     cursor: pointer;
 }
 
+.logout-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(0,0,0,0.25);
+    color: var(--spotify-white);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform var(--transition-fast), background var(--transition-fast);
+}
+
+.logout-btn:hover {
+    background: rgba(255,255,255,0.10);
+    transform: scale(1.06);
+}
+
+.logout-btn svg {
+    width: 18px;
+    height: 18px;
+}
+
 .user-avatar {
     width: 32px;
     height: 32px;

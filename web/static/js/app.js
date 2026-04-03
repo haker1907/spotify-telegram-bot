@@ -325,6 +325,28 @@ document.getElementById('loginBtn').addEventListener('click', () => {
     showNotification('Please use /login command in the Telegram bot', 'info');
 });
 
+// Logout
+document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('#logoutBtn');
+    if (!btn) return;
+    try {
+        const res = await fetch('/api/logout', {
+            method: 'POST',
+            credentials: 'same-origin'
+        });
+        // даже если сессии нет — просто сбрасываем UI
+        if (!res.ok) {
+            // ignore
+        }
+    } catch (_) {
+        // ignore
+    } finally {
+        userData = null;
+        updateUserUI();
+        showNotification('Logged out', 'info');
+    }
+});
+
 // Navigation
 function initializeNavigation() {
     const navItems = document.querySelectorAll('.nav-item');

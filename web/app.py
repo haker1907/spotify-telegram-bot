@@ -995,6 +995,26 @@ def get_me():
         print(f"❌ Me error: {e}")
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/api/logout', methods=['POST'])
+def logout():
+    """Выйти из веб-сессии (очистить cookie)."""
+    resp = jsonify({'success': True})
+    # Удаляем cookie с теми же атрибутами path/samesite; secure зависит от окружения
+    cookie_secure_env = os.getenv("WEB_COOKIE_SECURE", "auto").strip().lower()
+    secure_cookie = request.is_secure if cookie_secure_env == "auto" else cookie_secure_env in ("1", "true", "yes", "on")
+    resp.set_cookie(
+        "session_token",
+        "",
+        max_age=0,
+        expires=0,
+        httponly=True,
+        secure=secure_cookie,
+        samesite="Lax",
+        path="/",
+    )
+    return resp
+
 @app.route('/api/playlists', methods=['GET', 'POST'])
 @require_auth
 def handle_playlists():

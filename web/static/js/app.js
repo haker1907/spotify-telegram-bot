@@ -151,7 +151,9 @@ async function loadHistory(limit = 10) {
         const data = await response.json();
 
         historyItemsRaw = data.history || [];
-        historyData = historyItemsRaw.map(x => x.track).filter(Boolean);
+        // Важно: НЕ фильтруем null, иначе индексы historyData и historyItemsRaw разъедутся,
+        // и клик по элементу истории будет передавать неправильный трек.
+        historyData = historyItemsRaw.map(x => x.track);
         historyRendered = 0;
 
         if (!historyList) return;

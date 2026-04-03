@@ -630,6 +630,11 @@ def download():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
+        user_id = getattr(g, 'current_user_id', None)
+        if not user_id:
+            loop.close()
+            return jsonify({'error': 'Unauthorized'}), 401
+
         data = request.json
         track_id = data.get('track_id')
         track_name = data.get('track_name')
@@ -696,6 +701,16 @@ def download():
                             track_name=track_name, 
                             file_size=result.get('file_size', 0)
                         ))
+
+                    # Записываем в web history
+                    loop.run_until_complete(
+                        db.add_download_to_history(
+                            user_id=user_id,
+                            track_id=track_id,
+                            quality=str(quality),
+                            file_size=result.get('file_size', 0)
+                        )
+                    )
                 except Exception as reg_e:
                     print(f"⚠️ Warning: Registration in discovery failed: {reg_e}")
                 return send_file(
@@ -771,6 +786,16 @@ def download():
                         file_size=result.get('file_size', 0),
                         file_path=file_id # Используем file_id как путь для совместимости
                     ))
+
+                # Записываем в web history
+                loop.run_until_complete(
+                    db.add_download_to_history(
+                        user_id=user_id,
+                        track_id=track_id,
+                        quality=str(quality),
+                        file_size=result.get('file_size', 0)
+                    )
+                )
             except Exception as reg_e:
                 print(f"⚠️ Warning: Registration in discovery failed: {reg_e}")
 

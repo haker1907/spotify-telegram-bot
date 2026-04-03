@@ -42,7 +42,7 @@ async def my_playlists_command(update: Update, context: ContextTypes.DEFAULT_TYP
     message = "📋 <b>Мои плейлисты:</b>\n\n"
     
     for i, playlist in enumerate(playlists, 1):
-        track_count = await db.get_playlist_track_count(playlist.id)
+        track_count = await db.get_playlist_track_count(user_id, playlist.id)
         message += f"{i}. <b>{playlist.name}</b> ({track_count} треков)\n"
     
     keyboard = KeyboardBuilder.user_playlists(playlists)
@@ -117,7 +117,7 @@ async def receive_playlist_description(update: Update, context: ContextTypes.DEF
         # Если создание было инициировано для конкретного трека, добавляем его
         track_id = context.user_data.pop('plnew_track_id', None)
         if track_id:
-            added = await db.add_track_to_playlist(playlist.id, track_id)
+            added = await db.add_track_to_playlist(user_id, playlist.id, track_id)
             if added:
                 track = await db.get_track(track_id)
                 track_name = track.name if track else "Трек"
@@ -207,7 +207,7 @@ async def select_playlist_callback(update: Update, context: ContextTypes.DEFAULT
     lang = user.language
     
     # Добавляем трек
-    success = await db.add_track_to_playlist(playlist_id, track_id)
+    success = await db.add_track_to_playlist(user_id, playlist_id, track_id)
     
     if success:
         playlist = await db.get_playlist(playlist_id)

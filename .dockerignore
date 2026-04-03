@@ -58,3 +58,6 @@ debug_*.py
 # Temporary files
 *.tmp
 temp/
+
+# Tests
+tests/

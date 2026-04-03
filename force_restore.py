@@ -9,12 +9,14 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import config
 from services.telegram_storage_service import TelegramStorageService
 from services.db_backup_service import DatabaseBackupService
+from database.db_manager import DatabaseManager
 
 async def force_restore():
     print(f"🚀 Forcing restoration from Telegram Storage...")
     storage = TelegramStorageService()
     
-    db_path = config.DATABASE_URL.replace('sqlite+aiosqlite:///', '')
+    db = DatabaseManager()
+    db_path = db.get_database_file_path()
     backup_service = DatabaseBackupService(
         storage_service=storage,
         db_path=db_path

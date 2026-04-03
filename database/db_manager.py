@@ -54,6 +54,8 @@ class DatabaseManager:
             def set_sqlite_pragma(dbapi_connection, connection_record):
                 cursor = dbapi_connection.cursor()
                 cursor.execute("PRAGMA foreign_keys=ON")
+                # Снижает вероятность ошибок "database is locked" в многопроцессной среде
+                cursor.execute("PRAGMA busy_timeout=5000")
                 cursor.close()
 
         self.async_session = async_sessionmaker(
@@ -86,6 +88,9 @@ class DatabaseManager:
             if "sqlite" in self.database_url:
                 await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
                 await conn.exec_driver_sql("PRAGMA foreign_keys = ON")
+                # Более предсказуемая запись под нагрузкой
+                await conn.exec_driver_sql("PRAGMA synchronous=NORMAL")
+                await conn.exec_driver_sql("PRAGMA temp_store=MEMORY")
             
             # checkfirst=True предотвращает ошибки если таблицы уже существуют (например, после восстановления из бэкапа)
             def create_tables(sync_conn):
@@ -93,6 +98,36 @@ class DatabaseManager:
             
             await conn.run_sync(create_tables)
         print("✅ База данных инициализирована (WAL mode enabled)")
+
+    def get_database_file_path(self) -> Optional[str]:
+        """
+        Вернуть файловый путь к SQLite DB, если DATABASE_URL указывает на SQLite.
+        Для PostgreSQL/прочих СУБД возвращает None.
+        """
+        url = (self.database_url or "").strip()
+        if "sqlite" not in url:
+            return None
+
+        # Удаляем возможные параметры query string
+        url = url.split("?", 1)[0]
+
+        prefixes = [
+            "sqlite+aiosqlite:///",
+            "sqlite+aiosqlite://",
+            "sqlite:///",
+            "sqlite://",
+        ]
+
+        file_path = None
+        for p in prefixes:
+            if url.startswith(p):
+                file_path = url[len(p):]
+                break
+
+        if not file_path:
+            return None
+
+        return os.path.abspath(file_path)
     
     async def close(self):
         """Закрытие соединения с БД"""
@@ -240,9 +275,16 @@ class DatabaseManager:
     
     # ========== ТРЕКИ В ПЛЕЙЛИСТАХ ==========
     
-    async def add_track_to_playlist(self, playlist_id: int, track_id: str) -> bool:
+    async def add_track_to_playlist(self, user_id: int, playlist_id: int, track_id: str) -> bool:
         """Добавить трек в плейлист"""
         async with self.async_session() as session:
+            # Проверяем владение плейлистом
+            playlist_owner = await session.execute(
+                select(Playlist.id).where(Playlist.id == playlist_id).where(Playlist.user_id == user_id)
+            )
+            if playlist_owner.scalar_one_or_none() is None:
+                return False
+
             # Проверяем, не добавлен ли уже трек
             result = await session.execute(
                 select(PlaylistTrack)
@@ -280,9 +322,16 @@ class DatabaseManager:
             await session.commit()
             return True
     
-    async def get_playlist_tracks(self, playlist_id: int) -> List[Track]:
+    async def get_playlist_tracks(self, user_id: int, playlist_id: int) -> List[Track]:
         """Получить все треки плейлиста"""
         async with self.async_session() as session:
+            # Проверяем владение плейлистом
+            playlist_owner = await session.execute(
+                select(Playlist.id).where(Playlist.id == playlist_id).where(Playlist.user_id == user_id)
+            )
+            if playlist_owner.scalar_one_or_none() is None:
+                return []
+
             result = await session.execute(
                 select(Track)
                 .join(PlaylistTrack)
@@ -291,9 +340,16 @@ class DatabaseManager:
             )
             return list(result.scalars().all())
     
-    async def remove_track_from_playlist(self, playlist_id: int, track_id: str) -> bool:
+    async def remove_track_from_playlist(self, user_id: int, playlist_id: int, track_id: str) -> bool:
         """Удалить трек из плейлиста"""
         async with self.async_session() as session:
+            # Проверяем владение плейлистом
+            playlist_owner = await session.execute(
+                select(Playlist.id).where(Playlist.id == playlist_id).where(Playlist.user_id == user_id)
+            )
+            if playlist_owner.scalar_one_or_none() is None:
+                return False
+
             result = await session.execute(
                 delete(PlaylistTrack)
                 .where(PlaylistTrack.playlist_id == playlist_id)
@@ -302,9 +358,16 @@ class DatabaseManager:
             await session.commit()
             return result.rowcount > 0
     
-    async def get_playlist_track_count(self, playlist_id: int) -> int:
+    async def get_playlist_track_count(self, user_id: int, playlist_id: int) -> int:
         """Получить количество треков в плейлисте"""
         async with self.async_session() as session:
+            # Проверяем владение плейлистом
+            playlist_owner = await session.execute(
+                select(Playlist.id).where(Playlist.id == playlist_id).where(Playlist.user_id == user_id)
+            )
+            if playlist_owner.scalar_one_or_none() is None:
+                return 0
+
             result = await session.execute(
                 select(PlaylistTrack)
                 .where(PlaylistTrack.playlist_id == playlist_id)

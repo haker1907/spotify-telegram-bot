@@ -1,4 +1,4 @@
-﻿"""
+"""
 Database Backup Service - автоматический backup и восстановление БД через Telegram
 """
 import os
@@ -12,11 +12,11 @@ import httpx
 class DatabaseBackupService:
     """Сервис для backup и восстановления БД через Telegram Storage"""
     
-    def __init__(self, storage_service, db_path: str, db_manager=None):
+    def __init__(self, storage_service, db_path: Optional[str], db_manager=None):
         """
         Args:
             storage_service: TelegramStorageService instance
-            db_path: Путь к файлу БД (например, 'spotify_bot.db')
+            db_path: Путь к файлу БД (например, 'spotify_bot.db') для SQLite. Для других СУБД может быть None.
             db_manager: DatabaseManager instance for persistent logging
         """
         self.storage = storage_service
@@ -27,7 +27,14 @@ class DatabaseBackupService:
         self.backup_message_ids = []  # Список message_id созданных в сессии
         self.last_backup_time = datetime.min # Для троттлинга
         
-        print(f"📦 Database Backup Service initialized for: {db_path}")
+        if not self.db_path:
+            print("⚠️ Database Backup Service disabled: DATABASE_URL is not SQLite file-based.")
+            self.backup_file_id = None
+            self.is_running = False
+            self.backup_message_ids = []
+            self.last_backup_time = datetime.min
+        else:
+            print(f"📦 Database Backup Service initialized for: {db_path}")
     
     async def restore_from_telegram(self) -> bool:
         """
@@ -37,6 +44,8 @@ class DatabaseBackupService:
             True если БД успешно восстановлена, False если backup не найден
         """
         try:
+            if not self.db_path:
+                return False
             print("🔍 Checking for latest backup in Telegram pinned message...")
             backup_info = await self._find_latest_backup()
             
@@ -97,6 +106,9 @@ class DatabaseBackupService:
             True если backup успешно создан
         """
         try:
+            if not self.db_path:
+                print("⚠️ Backup skipped: db_path is not set (non-sqlite mode)")
+                return False
             # Троттлинг: не чаще чем раз в 15 секунд (если не force)
             if not force:
                 elapsed = (datetime.now() - self.last_backup_time).total_seconds()

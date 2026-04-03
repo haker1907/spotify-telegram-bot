@@ -5,6 +5,7 @@ let searchTimeout = null;
 let resultsData = [];
 let libraryData = [];
 let userData = JSON.parse(localStorage.getItem('userData') || 'null');
+let sessionToken = localStorage.getItem('session_token') || null;
 const audioPlayer = document.getElementById('audioPlayer');
 
 // Player state variables
@@ -29,22 +30,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Backup БД при закрытии/обновлении страницы
-    window.addEventListener('beforeunload', function (e) {
-        // Отправляем запрос на backup (используем sendBeacon для надежности)
-        const backupUrl = '/api/backup-db';
+    // endpoint теперь требует авторизацию, поэтому используем fetch с keepalive.
+    window.addEventListener('beforeunload', function () {
+        if (!sessionToken) return;
 
-        // sendBeacon гарантирует отправку даже при закрытии страницы
-        if (navigator.sendBeacon) {
-            navigator.sendBeacon(backupUrl, new Blob([JSON.stringify({})], { type: 'application/json' }));
-        } else {
-            // Fallback для старых браузеров
-            fetch(backupUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({}),
-                keepalive: true  // Важно для отправки при закрытии
-            }).catch(err => console.log('Backup request failed:', err));
-        }
+        const backupUrl = '/api/backup-db';
+        fetch(backupUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${sessionToken}`
+            },
+            body: JSON.stringify({}),
+            keepalive: true
+        }).catch(err => console.log('Backup request failed:', err));
     });
 });
 
@@ -104,7 +103,12 @@ async function checkAuthToken() {
             if (data.success) {
                 userData = data.user;
                 localStorage.setItem('userData', JSON.stringify(userData));
-                // Токен больше не нужен в localStorage после успешной авторизации
+                // Сохраняем сессионный токен для последующих запросов
+                if (data.session_token) {
+                    sessionToken = data.session_token;
+                    localStorage.setItem('session_token', sessionToken);
+                }
+                // Токен из Telegram больше не нужен в localStorage после успешной авторизации
                 localStorage.removeItem('auth_token');
                 showNotification(`Welcome back, ${userData.first_name || userData.username}!`, 'success');
                 // Clear URL param
@@ -113,11 +117,15 @@ async function checkAuthToken() {
                 loadPlaylists();
             } else {
                 localStorage.removeItem('auth_token');
+                localStorage.removeItem('session_token');
+                sessionToken = null;
                 showNotification('Invalid or expired token', 'error');
             }
         } catch (error) {
             console.error('Auth error:', error);
             localStorage.removeItem('auth_token');
+            localStorage.removeItem('session_token');
+            sessionToken = null;
             showNotification('Authentication failed', 'error');
         }
     }
@@ -207,6 +215,10 @@ async function searchTracks(query) {
 async function syncLibrary() {
     const btn = document.getElementById('syncLibraryBtn');
     if (!btn) return;
+    if (!sessionToken) {
+        showNotification('Please login first', 'info');
+        return;
+    }
 
     try {
         btn.classList.add('spinning');
@@ -214,7 +226,10 @@ async function syncLibrary() {
         showNotification('Syncing discovery library...', 'info');
 
         const response = await fetch('/api/sync-library', {
-            method: 'POST'
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${sessionToken}`
+            }
         });
 
         const data = await response.json();
@@ -335,12 +350,18 @@ async function playTrack(button, trackData = null) {
 
 async function playFromYouTube(track) {
     try {
+        if (!sessionToken) {
+            showNotification('Please login first', 'info');
+            return;
+        }
+
         showNotification('Preparing track...', 'info');
 
         const response = await fetch('/api/prepare-stream', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${sessionToken}`
             },
             body: JSON.stringify({
                 id: track.id,
@@ -525,9 +546,15 @@ function initializePlaylists() {
 
 async function loadPlaylists() {
     if (!userData) return;
+    if (!sessionToken) {
+        console.warn('No session token, cannot load playlists');
+        return;
+    }
     try {
         const response = await fetch('/api/playlists', {
-            headers: { 'X-User-ID': userData.id.toString() }
+            headers: {
+                'Authorization': `Bearer ${sessionToken}`
+            }
         });
         const data = await response.json();
         displayPlaylists(data.playlists || []);
@@ -556,10 +583,11 @@ function displayPlaylists(playlists) {
 
 async function viewPlaylist(playlistId, playlistName) {
     if (!userData) return;
+    if (!sessionToken) return;
 
     try {
         const response = await fetch(`/api/playlists/${playlistId}/tracks`, {
-            headers: { 'X-User-ID': userData.id.toString() }
+            headers: { 'Authorization': `Bearer ${sessionToken}` }
         });
         const data = await response.json();
 
@@ -612,7 +640,7 @@ async function createPlaylist() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-User-ID': userData.id.toString()
+                'Authorization': `Bearer ${sessionToken}`
             },
             body: JSON.stringify({ name, description })
         });
@@ -641,7 +669,7 @@ function closeAddToPlaylistModal() {
 async function loadPlaylistsForSelection() {
     try {
         const response = await fetch('/api/playlists', {
-            headers: { 'X-User-ID': userData.id.toString() }
+            headers: { 'Authorization': `Bearer ${sessionToken}` }
         });
         const data = await response.json();
         const list = document.getElementById('playlistsSelectionList');
@@ -669,7 +697,7 @@ async function addTrackToPlaylist(playlistId) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-User-ID': userData.id.toString()
+                'Authorization': `Bearer ${sessionToken}`
             },
             body: JSON.stringify({
                 playlist_id: playlistId,
@@ -705,6 +733,10 @@ function closeDownloadModal() {
 
 async function startDownload() {
     if (!currentTrack) return;
+    if (!sessionToken) {
+        showNotification('Please login first', 'info');
+        return;
+    }
     const format = document.querySelector('input[name="format"]:checked').value;
     const quality = document.getElementById('qualitySelect').value;
 
@@ -712,7 +744,10 @@ async function startDownload() {
         showNotification('Starting download...', 'info');
         const response = await fetch('/api/download', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${sessionToken}`
+            },
             body: JSON.stringify({
                 track_id: currentTrack.id || '',
                 track_name: currentTrack.name,

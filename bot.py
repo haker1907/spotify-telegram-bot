@@ -70,7 +70,7 @@ async def post_init(application: Application) -> None:
         
         # Настройка сервиса бэкапов для периодической работы
         storage_service = TelegramStorageService()
-        db_path = config.DATABASE_URL.replace('sqlite+aiosqlite:///', '')
+        db_path = db.get_database_file_path()
         backup_service = DatabaseBackupService(
             storage_service=storage_service,
             db_path=db_path,

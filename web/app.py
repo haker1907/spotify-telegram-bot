@@ -1,9 +1,14 @@
-from flask import Flask, request, jsonify, send_file, render_template
+from flask import Flask, request, jsonify, send_file, render_template, g
 from flask_cors import CORS
 import asyncio
 import threading
 import os
 import sys
+import functools
+from datetime import datetime, timedelta
+import jwt
+import time
+from collections import defaultdict
 
 # Добавляем корневую директорию в путь для импорта модулей
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -14,12 +19,123 @@ from services.download_service import DownloadService
 from database.db_manager import DatabaseManager
 
 app = Flask(__name__)
-CORS(app)
+# CORS: ограничиваем доверенные origin
+allowed_origins_env = os.getenv("WEB_ALLOWED_ORIGINS", "").strip()
+if allowed_origins_env:
+    allowed_origins = [o.strip() for o in allowed_origins_env.split(",") if o.strip()]
+else:
+    allowed_origins = [config.WEB_APP_URL, "http://localhost:5000", "https://localhost:5000"]
+
+CORS(
+    app,
+    origins=allowed_origins,
+    methods=["GET", "POST", "OPTIONS"],
+    supports_credentials=True,
+)
 
 # Инициализация сервисов
 spotify_service = SpotifyService()
 download_service = DownloadService()
 db = DatabaseManager()
+
+# Настройки сессионных токенов (JWT)
+SESSION_SECRET = os.getenv("WEB_SESSION_SECRET") or os.getenv("TELEGRAM_BOT_TOKEN") or "dev-insecure-session-secret"
+SESSION_TTL_SECONDS = int(os.getenv("WEB_SESSION_TTL", "2592000"))  # 30 дней по умолчанию
+
+
+def create_session_token(user_id: int) -> str:
+    """Создать JWT-сессию для веб-пользователя."""
+    payload = {
+        "sub": str(user_id),
+        "iat": int(datetime.utcnow().timestamp()),
+        "exp": int((datetime.utcnow() + timedelta(seconds=SESSION_TTL_SECONDS)).timestamp()),
+    }
+    return jwt.encode(payload, SESSION_SECRET, algorithm="HS256")
+
+
+def require_auth(fn):
+    """Декоратор для защиты эндпоинтов: требует Bearer JWT и кладёт user_id в g.current_user_id."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return jsonify({"error": "Unauthorized"}), 401
+
+        token = auth_header.split(" ", 1)[1].strip()
+        try:
+            data = jwt.decode(token, SESSION_SECRET, algorithms=["HS256"])
+        except jwt.ExpiredSignatureError:
+            return jsonify({"error": "Session expired"}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({"error": "Invalid session token"}), 401
+
+        user_id = data.get("sub")
+        if not user_id:
+            return jsonify({"error": "Invalid session payload"}), 401
+
+        try:
+            g.current_user_id = int(user_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "Invalid user id in session"}), 401
+
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+# ========== Rate limiting (in-memory, per process) ==========
+# В проде на multiple workers это не полностью глобально, но защищает от простого флуда.
+_rate_store = defaultdict(list)  # key -> list[timestamps]
+
+def _rate_limited(key: str, limit: int, per_seconds: int) -> tuple[bool, int]:
+    """
+    Возвращает (is_limited, retry_after_seconds).
+    retry_after_seconds полезно для фронтенда.
+    """
+    now = time.time()
+    window_start = now - per_seconds
+
+    timestamps = _rate_store.get(key, [])
+    timestamps = [t for t in timestamps if t >= window_start]
+
+    if len(timestamps) >= limit:
+        oldest = min(timestamps) if timestamps else now
+        retry_after = int(per_seconds - (now - oldest)) + 1
+        _rate_store[key] = timestamps  # обновим pruning
+        return True, max(1, retry_after)
+
+    timestamps.append(now)
+    _rate_store[key] = timestamps
+    return False, 0
+
+def rate_limit(limit: int, per_seconds: int):
+    """Декоратор rate limiting для защищённых эндпоинтов."""
+    def decorator(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            # Приоритет: user_id из require_auth, иначе IP.
+            user_id = getattr(g, "current_user_id", None)
+            forwarded_for = request.headers.get("X-Forwarded-For", "")
+            ip = forwarded_for.split(",")[0].strip() if forwarded_for else request.remote_addr
+            key = f"{fn.__name__}:{user_id or ip or 'anon'}"
+
+            limited, retry_after = _rate_limited(key, limit=limit, per_seconds=per_seconds)
+            if limited:
+                return jsonify({"error": "Too many requests", "retry_after": retry_after}), 429
+
+            return fn(*args, **kwargs)
+        return wrapper
+    return decorator
+
+# Defaults (можно переопределить env в Railway)
+DOWNLOAD_LIMIT = int(os.getenv("DOWNLOAD_RATE_LIMIT", "10"))
+DOWNLOAD_PERIOD = int(os.getenv("DOWNLOAD_RATE_PERIOD_SECONDS", "600"))  # 10 минут
+PREPARE_STREAM_LIMIT = int(os.getenv("PREPARE_STREAM_RATE_LIMIT", "10"))
+PREPARE_STREAM_PERIOD = int(os.getenv("PREPARE_STREAM_RATE_PERIOD_SECONDS", "600"))
+SYNC_LIMIT = int(os.getenv("SYNC_RATE_LIMIT", "1"))
+SYNC_PERIOD = int(os.getenv("SYNC_RATE_PERIOD_SECONDS", "3600"))  # 1 час
+BACKUP_LIMIT = int(os.getenv("BACKUP_RATE_LIMIT", "1"))
+BACKUP_PERIOD = int(os.getenv("BACKUP_RATE_PERIOD_SECONDS", "600"))  # 10 минут
 
 # Telegram Storage Service будет инициализирован при первом использовании
 telegram_storage = None
@@ -40,7 +156,7 @@ def get_backup_service():
         from services.db_backup_service import DatabaseBackupService
         backup_service = DatabaseBackupService(
             storage_service=get_telegram_storage(),
-            db_path=config.DATABASE_URL.replace('sqlite+aiosqlite:///', ''),
+            db_path=db.get_database_file_path(),
             db_manager=db
         )
     return backup_service
@@ -131,7 +247,14 @@ def index():
     auth_token = request.args.get('auth')
     return render_template('index.html', auth_token=auth_token)
 
+@app.route('/favicon.ico')
+def favicon():
+    # Чтобы не было 404 в консоли браузера: иконка не критична для работы приложения.
+    return ('', 204)
+
 @app.route('/api/sync/deep', methods=['POST'])
+@require_auth
+@rate_limit(SYNC_LIMIT, SYNC_PERIOD)
 def sync_deep():
     """Запустить глубокую синхронизацию (сканирование истории канала)"""
     try:
@@ -237,6 +360,8 @@ def search():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/sync-library', methods=['POST'])
+@require_auth
+@rate_limit(SYNC_LIMIT, SYNC_PERIOD)
 def sync_library():
     """Синхронизировать библиотеку (перенести данные из старых таблиц в Discovery)"""
     try:
@@ -383,6 +508,8 @@ def search_by_url(url):
         return jsonify({'error': str(e), 'tracks': []})
 
 @app.route('/api/download', methods=['POST'])
+@require_auth
+@rate_limit(DOWNLOAD_LIMIT, DOWNLOAD_PERIOD)
 def download():
     """Скачивание трека"""
     # Создаем один loop на весь запрос
@@ -560,45 +687,48 @@ def download():
 
 @app.route('/api/auth', methods=['POST'])
 def authenticate():
-    """Верификация токена из Telegram"""
+    """Верификация токена из Telegram и выдача веб-сессионного токена."""
     try:
-        data = request.json
+        data = request.json or {}
         token = data.get('token')
-        
+
         if not token:
             return jsonify({'error': 'Token is required'}), 400
-            
-        # Проверяем токен в БД
+
+        # Проверяем токен в БД (постоянная ссылка из /login)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         user = loop.run_until_complete(db.verify_auth_token(token))
         loop.close()
-        
-        if user:
-            return jsonify({
-                'success': True,
-                'user': {
-                    'id': user.id,
-                    'username': user.username or 'User',
-                    'first_name': user.first_name,
-                    'last_name': user.last_name
-                }
-            })
-        else:
+
+        if not user:
             return jsonify({'error': 'Invalid or expired token'}), 401
+
+        # Создаём короткоживущую веб-сессию (JWT)
+        session_token = create_session_token(user.id)
+
+        return jsonify({
+            'success': True,
+            'user': {
+                'id': user.id,
+                'username': user.username or 'User',
+                'first_name': user.first_name,
+                'last_name': user.last_name
+            },
+            'session_token': session_token
+        })
     except Exception as e:
         print(f"❌ Auth error: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/playlists', methods=['GET', 'POST'])
+@require_auth
 def handle_playlists():
     """Работа с плейлистами"""
     try:
-        user_id = request.headers.get('X-User-ID')
+        user_id = getattr(g, 'current_user_id', None)
         if not user_id:
             return jsonify({'error': 'Unauthorized'}), 401
-            
-        user_id = int(user_id)
         
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -610,7 +740,7 @@ def handle_playlists():
             result = []
             for pl in playlists_db:
                 # Получаем количество треков
-                count = loop.run_until_complete(db.get_playlist_track_count(pl.id))
+                count = loop.run_until_complete(db.get_playlist_track_count(user_id, pl.id))
                 result.append({
                     'id': pl.id,
                     'name': pl.name,
@@ -660,13 +790,13 @@ def handle_playlists():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/playlists/add_track', methods=['POST'])
+@require_auth
 def add_track_to_playlist():
     """Добавить трек в плейлист"""
     try:
-        user_id = request.headers.get('X-User-ID')
+        user_id = getattr(g, 'current_user_id', None)
         if not user_id:
             return jsonify({'error': 'Unauthorized'}), 401
-            
         data = request.json
         playlist_id = data.get('playlist_id')
         track_data = data.get('track')
@@ -696,7 +826,7 @@ def add_track_to_playlist():
         }))
         
         # 2. Добавляем в плейлист
-        success = loop.run_until_complete(db.add_track_to_playlist(playlist_id, track.id))
+        success = loop.run_until_complete(db.add_track_to_playlist(user_id, playlist_id, track.id))
         loop.close()
         
         if success:
@@ -719,10 +849,11 @@ def add_track_to_playlist():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/playlists/<int:playlist_id>/tracks', methods=['GET'])
+@require_auth
 def get_playlist_tracks(playlist_id):
     """Получить треки плейлиста"""
     try:
-        user_id = request.headers.get('X-User-ID')
+        user_id = getattr(g, 'current_user_id', None)
         if not user_id:
             return jsonify({'error': 'Unauthorized'}), 401
             
@@ -730,7 +861,7 @@ def get_playlist_tracks(playlist_id):
         asyncio.set_event_loop(loop)
         
         # Получаем треки плейлиста
-        tracks = loop.run_until_complete(db.get_playlist_tracks(playlist_id))
+        tracks = loop.run_until_complete(db.get_playlist_tracks(user_id, playlist_id))
         loop.close()
         
         # Форматируем результат
@@ -753,6 +884,8 @@ def get_playlist_tracks(playlist_id):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/prepare-stream', methods=['POST'])
+@require_auth
+@rate_limit(PREPARE_STREAM_LIMIT, PREPARE_STREAM_PERIOD)
 def prepare_stream():
     """Подготовить трек для стриминга через Telegram Storage"""
     try:
@@ -936,6 +1069,8 @@ def stream_file(filename):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/backup-db', methods=['POST'])
+@require_auth
+@rate_limit(BACKUP_LIMIT, BACKUP_PERIOD)
 def backup_database():
     """Создать backup БД (вызывается при закрытии/обновлении страницы)"""
     try:

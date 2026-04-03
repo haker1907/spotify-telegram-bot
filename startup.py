@@ -43,7 +43,7 @@ async def pre_startup_db_init():
             from services.db_backup_service import DatabaseBackupService
             
             storage = TelegramStorageService()
-            db_path = config.DATABASE_URL.replace('sqlite+aiosqlite:///', '')
+            db_path = db.get_database_file_path()
             backup_service = DatabaseBackupService(storage_service=storage, db_path=db_path, db_manager=db)
             
             restored = await backup_service.restore_from_telegram()

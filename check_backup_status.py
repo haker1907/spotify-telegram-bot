@@ -9,6 +9,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import config
 from services.telegram_storage_service import TelegramStorageService
 from services.db_backup_service import DatabaseBackupService
+from database.db_manager import DatabaseManager
 
 async def check_status():
     print(f"🔍 Checking Telegram Storage (Channel: {config.STORAGE_CHANNEL_ID})...")
@@ -26,7 +27,8 @@ async def check_status():
     else:
         print("❌ No pinned message found in the storage channel.")
     
-    db_path = config.DATABASE_URL.replace('sqlite+aiosqlite:///', '')
+    db = DatabaseManager()
+    db_path = db.get_database_file_path()
     if os.path.exists(db_path):
         size = os.path.getsize(db_path)
         print(f"💾 Local DB exists: {db_path} ({size} bytes)")

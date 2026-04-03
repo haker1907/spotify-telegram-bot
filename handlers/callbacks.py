@@ -41,6 +41,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_preview(query, context, callback_data, lang)
     elif callback_data.startswith("download_"):
         await download_track(query, context, callback_data, lang)
+    elif callback_data.startswith("redownload_"):
+        await redownload_track(query, context, callback_data, lang)
     elif callback_data.startswith("open_"):
         await open_in_spotify(query, context, callback_data, lang)
     elif callback_data.startswith("add_to_playlist_"):
@@ -379,6 +381,16 @@ async def download_track(query, context, callback_data, lang="ru"):
         )
 
 
+async def redownload_track(query, context, callback_data, lang="ru"):
+    """
+    Обёртка для кнопки "Скачать снова".
+    По сути повторяет сценарий callback "download_{track_id}".
+    """
+    # callback_data: redownload_{track_id}
+    track_id = callback_data.replace("redownload_", "")
+    await download_track(query, context, f"download_{track_id}", lang)
+
+
 async def open_in_spotify(query, context, callback_data, lang="ru"):
     """Открыть в Spotify"""
     track_id = callback_data.replace("open_", "")
@@ -433,9 +445,10 @@ async def add_track_to_playlist(query, context, callback_data, lang="ru"):
     track_id = parts[3]
     
     db = context.bot_data.get('db')
+    user_id = query.from_user.id
     
     # Добавляем трек в плейлист
-    success = await db.add_track_to_playlist(playlist_id, track_id)
+    success = await db.add_track_to_playlist(user_id, playlist_id, track_id)
     
     if success:
         playlist = await db.get_playlist(playlist_id)
@@ -478,7 +491,7 @@ async def show_user_playlists(query, context, lang="ru"):
     message = get_string("playlists_my", lang) + "\n\n"
     
     for i, playlist in enumerate(playlists, 1):
-        track_count = await db.get_playlist_track_count(playlist.id)
+        track_count = await db.get_playlist_track_count(user_id, playlist.id)
         count_text = get_string("playlist_tracks_count", lang, count=track_count)
         message += f"{i}. <b>{playlist.name}</b> {count_text}\n"
     
@@ -495,9 +508,10 @@ async def view_playlist(query, context, callback_data, lang="ru"):
     """Просмотр плейлиста"""
     playlist_id = int(callback_data.replace("view_playlist_", ""))
     db = context.bot_data.get('db')
+    user_id = query.from_user.id
     
     playlist = await db.get_playlist(playlist_id)
-    tracks = await db.get_playlist_tracks(playlist_id)
+    tracks = await db.get_playlist_tracks(user_id, playlist_id)
     
     if not playlist:
         await query.message.edit_text(get_string("playlist_not_found", lang))
@@ -560,8 +574,9 @@ async def remove_track_from_playlist(query, context, callback_data, lang="ru"):
     playlist_id = int(parts[4])
     
     db = context.bot_data.get('db')
+    user_id = query.from_user.id
     
-    success = await db.remove_track_from_playlist(playlist_id, track_id)
+    success = await db.remove_track_from_playlist(user_id, playlist_id, track_id)
     
     if success:
         await query.message.edit_text(

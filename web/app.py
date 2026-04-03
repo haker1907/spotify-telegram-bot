@@ -396,26 +396,13 @@ def admin_tracks_enrich_images():
                 track_id = str(t.get('id') or '').strip()
                 if not track_id:
                     return
-                url = t.get('spotify_url') or ''
-                name = (t.get('name') or '').strip()
-                artist = (t.get('artist') or '').strip()
 
                 async with sem:
-                    # 1) Полноценный Spotify track URL
-                    info = None
-                    if isinstance(url, str) and '/track/' in url:
-                        info = await spotify_service.get_track_info_from_url(url)
+                    # Надёжнее всего: у нас уже есть Spotify track_id (tracks.id в БД).
+                    # Берём обложку через oEmbed/embed по ID (без текстового поиска).
+                    info = await spotify_service.get_track_info(track_id)
                     if info and info.get('image_url'):
                         out[track_id] = info['image_url']
-                        return
-
-                    # 2) Фолбэк: поиск по тексту
-                    q = f"{artist} {name}".strip()
-                    if not q:
-                        return
-                    results = await spotify_service.search_tracks(q, limit=1)
-                    if results and results[0].get('image_url'):
-                        out[track_id] = results[0]['image_url']
 
             await asyncio.gather(*(one(t) for t in items_), return_exceptions=True)
             return out

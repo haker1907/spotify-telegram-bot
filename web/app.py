@@ -365,43 +365,69 @@ def admin_tracks():
         tracks = loop.run_until_complete(db.get_tracks_overview_for_admin(limit=limit))
         loop.close()
 
-        # Подтягиваем обложки "на лету" (как в Discover) для треков без image.
-        # Важно: делаем это ограниченно, чтобы не тормозить админку на больших лимитах.
-        missing = [t for t in (tracks or []) if not t.get('image')]
-        missing = missing[:20]  # safety cap per request
-        if missing:
-            async def _enrich(items: list[dict]):
-                sem = asyncio.Semaphore(5)
-
-                async def one(t: dict):
-                    async with sem:
-                        # 1) Если есть полноценный Spotify track URL — берём обложку через oEmbed/embed
-                        url = t.get('spotify_url') or ''
-                        info = None
-                        if isinstance(url, str) and '/track/' in url:
-                            info = await spotify_service.get_track_info_from_url(url)
-                        if info and info.get('image_url'):
-                            t['image'] = info.get('image_url')
-                            return
-
-                        # 2) Фолбэк как в Discover: ищем по тексту (artist + name)
-                        q = f"{t.get('artist') or ''} {t.get('name') or ''}".strip()
-                        if not q:
-                            return
-                        results = await spotify_service.search_tracks(q, limit=1)
-                        if results and results[0].get('image_url'):
-                            t['image'] = results[0].get('image_url')
-
-                await asyncio.gather(*(one(t) for t in items), return_exceptions=True)
-
-            enrich_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(enrich_loop)
-            enrich_loop.run_until_complete(_enrich(missing))
-            enrich_loop.close()
-
         return jsonify({'tracks': tracks})
     except Exception as e:
         print(f"❌ Admin tracks error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/api/tracks/enrich-images', methods=['POST'])
+@require_auth
+@require_admin
+def admin_tracks_enrich_images():
+    """
+    Догрузка обложек для треков админки.
+    Важно: вынесено в отдельный запрос, чтобы основной список грузился быстро.
+    """
+    try:
+        data = request.json or {}
+        items = data.get('tracks') or []
+        if not isinstance(items, list):
+            return jsonify({'error': 'tracks must be a list'}), 400
+
+        # Safety caps
+        items = items[:30]
+
+        async def _enrich(items_: list[dict]) -> dict:
+            sem = asyncio.Semaphore(5)
+            out: dict[str, str] = {}
+
+            async def one(t: dict):
+                track_id = str(t.get('id') or '').strip()
+                if not track_id:
+                    return
+                url = t.get('spotify_url') or ''
+                name = (t.get('name') or '').strip()
+                artist = (t.get('artist') or '').strip()
+
+                async with sem:
+                    # 1) Полноценный Spotify track URL
+                    info = None
+                    if isinstance(url, str) and '/track/' in url:
+                        info = await spotify_service.get_track_info_from_url(url)
+                    if info and info.get('image_url'):
+                        out[track_id] = info['image_url']
+                        return
+
+                    # 2) Фолбэк: поиск по тексту
+                    q = f"{artist} {name}".strip()
+                    if not q:
+                        return
+                    results = await spotify_service.search_tracks(q, limit=1)
+                    if results and results[0].get('image_url'):
+                        out[track_id] = results[0]['image_url']
+
+            await asyncio.gather(*(one(t) for t in items_), return_exceptions=True)
+            return out
+
+        enrich_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(enrich_loop)
+        images = enrich_loop.run_until_complete(_enrich(items))
+        enrich_loop.close()
+
+        return jsonify({'images': images})
+    except Exception as e:
+        print(f"❌ Admin enrich images error: {e}")
         return jsonify({'error': str(e)}), 500
 
 

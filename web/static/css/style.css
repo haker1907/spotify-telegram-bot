@@ -8,6 +8,7 @@
     --spotify-gray: #282828;
     --spotify-light-gray: #B3B3B3;
     --spotify-white: #FFFFFF;
+    --spotify-card-bg: #1f1f1f;
 
     /* Gradients */
     --gradient-primary: linear-gradient(135deg, #1DB954 0%, #1ed760 100%);
@@ -703,7 +704,8 @@ body {
     transition: background var(--transition-normal);
     position: relative;
     cursor: default;
-    animation: cardEnter 0.25s ease both;
+    animation: cardEnter 0.22s ease both;
+    will-change: transform;
 }
 
 @keyframes cardEnter {
@@ -852,7 +854,8 @@ body {
     border-radius: 8px;
     cursor: pointer;
     transition: background var(--transition-normal);
-    animation: cardEnter 0.25s ease both;
+    animation: cardEnter 0.22s ease both;
+    will-change: transform;
 }
 
 .playlist-card:hover {
@@ -1096,6 +1099,63 @@ textarea.text-input {
     background: rgba(255, 255, 255, 0.1);
 }
 
+.load-more-btn {
+    margin: 14px auto 0;
+    display: block;
+    border: 1px solid var(--spotify-light-gray);
+    background: transparent;
+    color: var(--spotify-light-gray);
+    border-radius: 999px;
+    padding: 8px 16px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all var(--transition-fast);
+}
+
+.load-more-btn:hover {
+    color: var(--spotify-white);
+    border-color: var(--spotify-white);
+    background: rgba(255, 255, 255, 0.08);
+}
+
+/* Toast notifications */
+.toast-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 10000;
+    pointer-events: none;
+}
+
+.toast {
+    min-width: 220px;
+    max-width: 380px;
+    color: #fff;
+    border-radius: 10px;
+    padding: 12px 14px;
+    box-shadow: var(--shadow-lg);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    transform: translateY(-8px);
+    opacity: 0;
+    animation: toastIn .18s ease forwards;
+}
+
+.toast.info { background: #2a2a2a; }
+.toast.success { background: #1db954; }
+.toast.error { background: #e22134; }
+.toast.leaving { animation: toastOut .18s ease forwards; }
+
+@keyframes toastIn {
+    to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes toastOut {
+    to { transform: translateY(-6px); opacity: 0; }
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     body {
@@ -1129,6 +1189,13 @@ textarea.text-input {
 
     .player-volume {
         justify-content: center;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
     }
 }
 

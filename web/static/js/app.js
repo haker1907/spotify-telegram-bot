@@ -2,12 +2,20 @@
 
 let currentTrack = null;
 let searchTimeout = null;
+let searchController = null;
+let lastSearchQuery = '';
 let resultsData = [];
 let libraryData = [];
 let historyData = [];
 let userData = JSON.parse(localStorage.getItem('userData') || 'null');
 let sessionToken = localStorage.getItem('session_token') || null;
 const audioPlayer = document.getElementById('audioPlayer');
+const searchCache = new Map(); // query -> {ts, tracks}
+const LIBRARY_PAGE_SIZE = 24;
+const HISTORY_PAGE_SIZE = 20;
+let libraryRendered = 0;
+let historyRendered = 0;
+let historyItemsRaw = [];
 
 // Player state variables
 let isRepeatEnabled = false;
@@ -147,7 +155,9 @@ async function loadHistory(limit = 10) {
         });
         const data = await response.json();
 
-        historyData = (data.history || []).map(x => x.track).filter(Boolean);
+        historyItemsRaw = data.history || [];
+        historyData = historyItemsRaw.map(x => x.track).filter(Boolean);
+        historyRendered = 0;
 
         if (!historyList) return;
         if (!data.history || data.history.length === 0) {
@@ -155,13 +165,30 @@ async function loadHistory(limit = 10) {
             return;
         }
 
-        historyList.innerHTML = data.history
-            .map((item, idx) => renderHistoryItem(item, idx))
-            .join('');
+        renderHistoryChunk(true);
     } catch (error) {
         console.error('Load history error:', error);
         showNotification('Failed to load history', 'error');
     }
+}
+
+function renderHistoryChunk(reset = false) {
+    const historyList = document.getElementById('historyList');
+    if (!historyList) return;
+
+    if (reset) historyList.innerHTML = '';
+    const start = historyRendered;
+    const end = Math.min(historyRendered + HISTORY_PAGE_SIZE, historyItemsRaw.length);
+    if (start >= end) return;
+
+    const html = historyItemsRaw
+        .slice(start, end)
+        .map((item, idx) => renderHistoryItem(item, start + idx))
+        .join('');
+
+    historyList.insertAdjacentHTML('beforeend', html);
+    historyRendered = end;
+    renderLoadMoreButton('historyList', historyRendered < historyItemsRaw.length, () => renderHistoryChunk(false));
 }
 
 // View Toggle for Discover Section
@@ -304,21 +331,42 @@ function initializeSearch() {
 
         if (query.length < 2) {
             document.getElementById('resultsGrid').innerHTML = '';
+            lastSearchQuery = '';
             return;
         }
 
         searchTimeout = setTimeout(() => {
-            if (query.includes('spotify.com') || query.includes('open.spotify')) {
-                searchTracks(query);
-            } else {
-                searchTracks(query);
-            }
-        }, 500);
+            searchTracks(query);
+        }, 280);
+    });
+
+    searchInput.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        clearTimeout(searchTimeout);
+        const query = e.target.value.trim();
+        if (query.length >= 2) {
+            searchTracks(query);
+        }
     });
 }
 
 async function searchTracks(query) {
     try {
+        const normalizedQuery = (query || '').trim();
+        if (!normalizedQuery || normalizedQuery === lastSearchQuery) return;
+        lastSearchQuery = normalizedQuery;
+
+        // Serve fresh cached results immediately
+        const cached = searchCache.get(normalizedQuery);
+        if (cached && (Date.now() - cached.ts) < 30000) {
+            displayResults(cached.tracks || []);
+            return;
+        }
+
+        // Cancel previous in-flight search request
+        if (searchController) searchController.abort();
+        searchController = new AbortController();
+
         // Skeleton вместо пустого состояния пока идет запрос
         const resultsGrid = document.getElementById('resultsGrid');
         if (resultsGrid) resultsGrid.innerHTML = renderTrackSkeletons(6);
@@ -326,14 +374,20 @@ async function searchTracks(query) {
         const response = await fetch('/api/search', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query })
+            body: JSON.stringify({ query: normalizedQuery }),
+            signal: searchController.signal
         });
 
         const data = await response.json();
-        displayResults(data.tracks || []);
+        const tracks = data.tracks || [];
+        searchCache.set(normalizedQuery, { ts: Date.now(), tracks });
+        displayResults(tracks);
     } catch (error) {
+        if (error?.name === 'AbortError') return;
         console.error('Search error:', error);
         showNotification('Search failed. Please try again.', 'error');
+    } finally {
+        searchController = null;
     }
 }
 
@@ -390,16 +444,47 @@ async function loadLibrary() {
         }
 
         document.getElementById('librarySection').style.display = 'block';
-        libraryGridAfter.innerHTML = '';
         libraryData = data.tracks;
-
-        data.tracks.forEach((track, index) => {
-            const card = renderTrackCard(track, index, 'library');
-            libraryGridAfter.innerHTML += card;
-        });
+        libraryRendered = 0;
+        renderLibraryChunk(true);
     } catch (error) {
         console.error('Load library error:', error);
     }
+}
+
+function renderLibraryChunk(reset = false) {
+    const libraryGrid = document.getElementById('libraryGrid');
+    if (!libraryGrid) return;
+    if (reset) libraryGrid.innerHTML = '';
+
+    const start = libraryRendered;
+    const end = Math.min(libraryRendered + LIBRARY_PAGE_SIZE, libraryData.length);
+    if (start >= end) return;
+
+    const html = libraryData
+        .slice(start, end)
+        .map((track, idx) => renderTrackCard(track, start + idx, 'library'))
+        .join('');
+    libraryGrid.insertAdjacentHTML('beforeend', html);
+    libraryRendered = end;
+
+    renderLoadMoreButton('libraryGrid', libraryRendered < libraryData.length, () => renderLibraryChunk(false));
+}
+
+function renderLoadMoreButton(containerId, shouldShow, onClick) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    const oldBtn = container.parentElement?.querySelector(`.load-more-btn[data-for="${containerId}"]`);
+    if (oldBtn) oldBtn.remove();
+    if (!shouldShow) return;
+
+    const btn = document.createElement('button');
+    btn.className = 'load-more-btn';
+    btn.dataset.for = containerId;
+    btn.textContent = 'Load more';
+    btn.addEventListener('click', onClick);
+    container.parentElement.appendChild(btn);
 }
 
 function displayResults(tracks) {
@@ -418,7 +503,7 @@ function renderTrackCard(track, index, type = 'search') {
     return `
         <div class="track-card" data-index="${index}" data-type="${type}">
             <div class="track-image">
-                ${track.image ? `<img src="${track.image}" alt="${track.name}" />` :
+                ${track.image ? `<img loading="lazy" decoding="async" src="${track.image}" alt="${track.name}" />` :
             `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>`}
             </div>
             <div class="track-info">
@@ -911,20 +996,16 @@ async function startDownload() {
 }
 
 function showNotification(message, type = 'info') {
+    const container = document.getElementById('toastContainer') || document.body;
     const notification = document.createElement('div');
-    notification.style.cssText = `
-        position: fixed; top: 24px; right: 24px;
-        background: ${type === 'error' ? '#e22134' : type === 'success' ? '#1db954' : '#2a2a2a'};
-        color: white; padding: 16px 24px; border-radius: 8px;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3); z-index: 10000;
-        animation: slideIn 0.3s ease; font-size: 14px; font-weight: 600;
-    `;
+    notification.className = `toast ${type}`;
     notification.textContent = message;
-    document.body.appendChild(notification);
+    container.appendChild(notification);
+
     setTimeout(() => {
-        notification.style.animation = 'slideOut 0.3s ease';
-        setTimeout(() => notification.remove(), 300);
-    }, 3000);
+        notification.classList.add('leaving');
+        setTimeout(() => notification.remove(), 220);
+    }, 2500);
 }
 
 document.getElementById('downloadModal').addEventListener('click', (e) => {

@@ -99,19 +99,25 @@ class DatabaseManager:
             await conn.run_sync(create_tables)
 
             # Lightweight schema sync for SQLite (no migrations framework).
-            # We ensure `users.is_admin` exists so admin checks won't crash on old DBs.
+            # Ensure new columns exist in old deployments.
             if "sqlite" in self.database_url:
-                def ensure_admin_column(sync_conn):
+                def ensure_users_columns(sync_conn):
                     try:
                         columns = [row[1] for row in sync_conn.exec_driver_sql("PRAGMA table_info(users)")]
                         if "is_admin" not in columns:
                             print("⚙️ [DB] Adding missing column users.is_admin...")
                             sync_conn.exec_driver_sql("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
+                        if "referred_by" not in columns:
+                            print("⚙️ [DB] Adding missing column users.referred_by...")
+                            sync_conn.exec_driver_sql("ALTER TABLE users ADD COLUMN referred_by BIGINT")
+                        if "referrals_count" not in columns:
+                            print("⚙️ [DB] Adding missing column users.referrals_count...")
+                            sync_conn.exec_driver_sql("ALTER TABLE users ADD COLUMN referrals_count INTEGER DEFAULT 0")
                     except Exception as e:
                         # Don't block startup if schema introspection fails.
-                        print(f"⚠️ [DB] Could not ensure users.is_admin column: {e}")
+                        print(f"⚠️ [DB] Could not ensure users columns: {e}")
 
-                await conn.run_sync(ensure_admin_column)
+                await conn.run_sync(ensure_users_columns)
         print("✅ База данных инициализирована (WAL mode enabled)")
 
     def get_database_file_path(self) -> Optional[str]:

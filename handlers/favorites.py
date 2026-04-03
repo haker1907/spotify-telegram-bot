@@ -31,21 +31,21 @@ async def favorites_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         # Формируем сообщение
-        title = "⭐ <b>Избранные треки</b>" if lang == "ru" else "⭐ <b>Favorite Tracks</b>"
-        count_text = f"Всего: {len(favorites)}" if lang == "ru" else f"Total: {len(favorites)}"
+        title = get_string("favorites_title", lang)
+        count_text = get_string("favorites_total", lang, count=len(favorites))
         message = f"{title}\n\n{count_text}\n\n"
         
         for i, fav in enumerate(favorites[:10], 1):  # Показываем первые 10
             track = fav['track']
             added_at = fav['added_at'].strftime('%d.%m.%Y')
-            added_text = "Добавлено" if lang == "ru" else "Added"
+            added_text = get_string("favorites_added", lang)
             
             message += f"{i}. 🎵 <b>{track['name']}</b>\n"
             message += f"   👤 {track['artist']}\n"
             message += f"   📅 {added_text}: {added_at}\n\n"
         
         if len(favorites) > 10:
-            more_text = f"ещё {len(favorites) - 10} треков" if lang == "ru" else f"{len(favorites) - 10} more tracks"
+            more_text = get_string("favorites_more", lang, count=len(favorites) - 10)
             message += f"\n... и {more_text}"
         
         await update.message.reply_text(message, parse_mode='HTML')
@@ -73,11 +73,11 @@ async def add_to_favorites_callback(update: Update, context: ContextTypes.DEFAUL
     try:
         await db.add_to_favorites(user_id, track_id)
         
-        msg = "⭐ Добавлено в избранное!" if lang == "ru" else "⭐ Added to favorites!"
+        msg = get_string("favorites_added_ok", lang)
         await query.answer(msg, show_alert=True)
         
         # Обновляем клавиатуру
-        keyboard = get_track_actions_keyboard(track_id, is_favorite=True)
+        keyboard = get_track_actions_keyboard(track_id, is_favorite=True, lang=lang)
         await query.edit_message_reply_markup(reply_markup=keyboard)
         
     except Exception as e:
@@ -103,11 +103,11 @@ async def remove_from_favorites_callback(update: Update, context: ContextTypes.D
     try:
         await db.remove_from_favorites(user_id, track_id)
         
-        msg = "💔 Удалено из избранного" if lang == "ru" else "💔 Removed from favorites"
+        msg = get_string("favorites_removed_ok", lang)
         await query.answer(msg, show_alert=True)
         
         # Обновляем клавиатуру
-        keyboard = get_track_actions_keyboard(track_id, is_favorite=False)
+        keyboard = get_track_actions_keyboard(track_id, is_favorite=False, lang=lang)
         await query.edit_message_reply_markup(reply_markup=keyboard)
         
     except Exception as e:

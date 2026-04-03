@@ -3,12 +3,12 @@ from __future__ import annotations
 Менеджер базы данных для работы с SQLite
 """
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import select, delete, event, func
+from sqlalchemy import select, delete, event, func, or_
 from sqlalchemy.engine import Engine
 from typing import Optional, List
 from datetime import datetime, timedelta
 
-from .models import Base, User, Playlist, Track, PlaylistTrack, Album, DownloadHistory, Favorite, TrackCache, AuthToken, TelegramFile, BackupLog
+from .models import Base, User, Playlist, Track, PlaylistTrack, Album, DownloadHistory, Favorite, TrackCache, AuthToken, TelegramFile, BackupLog, AdminAuditLog
 import config
 import os
 
@@ -669,9 +669,7 @@ class DatabaseManager:
     async def get_tracks_overview_for_admin(self, limit: int = 100):
         """Админ: обзор треков (только чтение)."""
         async with self.async_session() as session:
-            result = await session.execute(
-                select(Track).order_by(Track.download_count.desc()).limit(limit)
-            )
+            result = await session.execute(select(Track).order_by(Track.download_count.desc()).limit(limit))
             tracks = result.scalars().all()
 
             return [
@@ -685,6 +683,99 @@ class DatabaseManager:
                     "spotify_url": t.spotify_url,
                 }
                 for t in tracks
+            ]
+    
+    async def get_tracks_overview_for_admin_filtered(
+        self,
+        limit: int = 100,
+        query: str = "",
+        sort_by: str = "downloads_desc",
+        without_cover: bool = False,
+        min_downloads: int = 0,
+    ):
+        """Админ: обзор треков с фильтрами и сортировкой."""
+        async with self.async_session() as session:
+            stmt = select(Track)
+            if query:
+                q = f"%{query}%"
+                stmt = stmt.where(or_(Track.name.ilike(q), Track.artist.ilike(q), Track.id.ilike(q)))
+            if without_cover:
+                stmt = stmt.where(or_(Track.image_url == None, Track.image_url == ""))  # noqa: E711
+            if min_downloads > 0:
+                stmt = stmt.where(Track.download_count >= min_downloads)
+
+            if sort_by == "name_asc":
+                stmt = stmt.order_by(Track.name.asc())
+            elif sort_by == "name_desc":
+                stmt = stmt.order_by(Track.name.desc())
+            else:
+                stmt = stmt.order_by(Track.download_count.desc())
+
+            result = await session.execute(stmt.limit(limit))
+            tracks = result.scalars().all()
+            return [
+                {
+                    "id": t.id,
+                    "name": t.name,
+                    "artist": t.artist,
+                    "image": getattr(t, "image_url", None),
+                    "download_count": t.download_count,
+                    "spotify_url": t.spotify_url,
+                }
+                for t in tracks
+            ]
+
+    async def save_referral(self, user_id: int, referrer_id: int) -> bool:
+        """Сохранить реферальную связь для пользователя."""
+        if user_id == referrer_id:
+            return False
+        async with self.async_session() as session:
+            user = await session.get(User, user_id)
+            referrer = await session.get(User, referrer_id)
+            if not user or not referrer:
+                return False
+            if getattr(user, "referred_by", None):
+                return False
+            user.referred_by = referrer_id
+            referrer.referrals_count = int(getattr(referrer, "referrals_count", 0)) + 1
+            await session.commit()
+            return True
+
+    async def log_admin_action(
+        self,
+        admin_user_id: int,
+        action: str,
+        target_type: Optional[str] = None,
+        target_id: Optional[str] = None,
+        details: Optional[str] = None,
+    ):
+        async with self.async_session() as session:
+            session.add(
+                AdminAuditLog(
+                    admin_user_id=admin_user_id,
+                    action=action,
+                    target_type=target_type,
+                    target_id=target_id,
+                    details=details,
+                )
+            )
+            await session.commit()
+
+    async def get_admin_audit_logs(self, limit: int = 100):
+        async with self.async_session() as session:
+            result = await session.execute(select(AdminAuditLog).order_by(AdminAuditLog.created_at.desc()).limit(limit))
+            logs = result.scalars().all()
+            return [
+                {
+                    "id": l.id,
+                    "admin_user_id": l.admin_user_id,
+                    "action": l.action,
+                    "target_type": l.target_type,
+                    "target_id": l.target_id,
+                    "details": l.details,
+                    "created_at": l.created_at,
+                }
+                for l in logs
             ]
     
     # ========== КЭШИРОВАНИЕ (Функция 10) ==========

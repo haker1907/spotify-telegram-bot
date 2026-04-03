@@ -343,6 +343,15 @@ body {
     max-width: 500px;
 }
 
+.queue-status {
+    font-size: 12px;
+    color: var(--spotify-light-gray);
+    max-width: 520px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .player-controls {
     display: flex;
     align-items: center;

@@ -3,6 +3,7 @@
 """
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from .strings import get_string
+import config
 
 
 class KeyboardBuilder:
@@ -14,6 +15,7 @@ class KeyboardBuilder:
         keyboard = [
             [KeyboardButton(get_string("btn_search", lang))],
             [KeyboardButton(get_string("btn_history", lang)), KeyboardButton(get_string("btn_my_playlists", lang))],
+            [KeyboardButton(get_string("btn_favorites", lang))],
             [KeyboardButton(get_string("btn_settings", lang)), KeyboardButton(get_string("btn_help", lang))]
         ]
         return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -115,15 +117,23 @@ def get_quality_keyboard(lang: str = "ru", current: str = "192", file_format: st
     return InlineKeyboardMarkup(keyboard)
 
 
-def get_track_actions_keyboard(track_id: str, is_favorite: bool = False) -> InlineKeyboardMarkup:
-    """Клавиатура действий с треком (без Избранного)"""
+def get_track_actions_keyboard(track_id: str, is_favorite: bool = False, lang: str = "ru") -> InlineKeyboardMarkup:
+    """Клавиатура действий с треком"""
     keyboard = []
     
     # Первая строка: Скачать снова
-    keyboard.append([InlineKeyboardButton("🔄 Скачать снова", callback_data=f"redownload_{track_id}")])
+    keyboard.append([InlineKeyboardButton("🔄 Скачать снова" if lang == "ru" else "🔄 Download again", callback_data=f"redownload_{track_id}")])
     
     # Вторая строка: Плейлисты
-    keyboard.append([InlineKeyboardButton("➕ В плейлист", callback_data=f"addto_{track_id}")])
+    keyboard.append([InlineKeyboardButton("➕ В плейлист" if lang == "ru" else "➕ Add to playlist", callback_data=f"addto_{track_id}")])
+
+    if is_favorite:
+        keyboard.append([InlineKeyboardButton("💔 Убрать из избранного" if lang == "ru" else "💔 Remove favorite", callback_data=f"unfav_{track_id}")])
+    else:
+        keyboard.append([InlineKeyboardButton("⭐ В избранное" if lang == "ru" else "⭐ Add to favorites", callback_data=f"fav_{track_id}")])
+
+    share_url = f"https://t.me/share/url?url={config.BOT_PUBLIC_URL}&text={get_string('share_text', lang)}"
+    keyboard.append([InlineKeyboardButton(get_string("btn_share_bot", lang), url=share_url)])
     
     return InlineKeyboardMarkup(keyboard)
 
@@ -177,6 +187,14 @@ def get_search_results_keyboard(results: list) -> InlineKeyboardMarkup:
         button_text = f"🎵 {track_name} - {artist}"[:64]  # Telegram лимит
         keyboard.append([InlineKeyboardButton(button_text, callback_data=f"download_{track_id}")])
     
+    return InlineKeyboardMarkup(keyboard)
+
+
+def get_collection_keyboard(results: list, collection_type: str, collection_id: str, lang: str = "ru") -> InlineKeyboardMarkup:
+    """Клавиатура коллекции + кнопка пакетного скачивания."""
+    keyboard = get_search_results_keyboard(results).inline_keyboard
+    batch_text = f"⬇️ Скачать все ({min(len(results), 10)})" if lang == "ru" else f"⬇️ Download all ({min(len(results), 10)})"
+    keyboard.append([InlineKeyboardButton(batch_text, callback_data=f"batchdl_{collection_type}_{collection_id}")])
     return InlineKeyboardMarkup(keyboard)
 
 

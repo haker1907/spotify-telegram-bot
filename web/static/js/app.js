@@ -29,6 +29,24 @@ let pendingSeekSeconds = null;
 const PLAYBACK_STORAGE_KEY = 'playbackStateV1';
 let lastPlaybackSaveAt = 0;
 
+function updateQueueStatus() {
+    const el = document.getElementById('queueStatus');
+    if (!el) return;
+    if (!currentPlaylist || currentPlaylist.length === 0 || currentTrackIndex < 0) {
+        el.textContent = 'Queue: empty';
+        return;
+    }
+    const current = currentPlaylist[currentTrackIndex];
+    const nextIndex = isShuffleEnabled
+        ? Math.floor(Math.random() * currentPlaylist.length)
+        : (currentTrackIndex + 1) % currentPlaylist.length;
+    const prevIndex = (currentTrackIndex - 1 + currentPlaylist.length) % currentPlaylist.length;
+    const prev = currentPlaylist[prevIndex];
+    const next = currentPlaylist[nextIndex];
+    const mode = `${isShuffleEnabled ? 'Shuffle:on' : 'Shuffle:off'} | ${isRepeatEnabled ? 'Repeat:on' : 'Repeat:off'}`;
+    el.textContent = `${mode} | Prev: ${prev?.name || '-'} | Now: ${current?.name || '-'} | Next: ${next?.name || '-'}`;
+}
+
 // Initialize app
 document.addEventListener('DOMContentLoaded', () => {
     checkAuthToken();
@@ -665,6 +683,7 @@ async function playTrack(button, trackData = null) {
         // Set current playlist and index
         currentPlaylist = type === 'library' ? libraryData : resultsData;
         currentTrackIndex = index;
+        updateQueueStatus();
     }
 
     if (!track) return;
@@ -900,6 +919,7 @@ function toggleRepeat() {
         repeatBtn.classList.add('inactive');
         showNotification('Repeat disabled', 'info');
     }
+    updateQueueStatus();
 }
 
 function toggleShuffle() {
@@ -930,6 +950,7 @@ function playNext() {
     }
 
     const nextTrack = currentPlaylist[currentTrackIndex];
+    updateQueueStatus();
     playTrack(null, nextTrack);
 }
 
@@ -942,6 +963,7 @@ function playPrevious() {
     // Always go to previous track sequentially
     currentTrackIndex = (currentTrackIndex - 1 + currentPlaylist.length) % currentPlaylist.length;
     const prevTrack = currentPlaylist[currentTrackIndex];
+    updateQueueStatus();
     playTrack(null, prevTrack);
 }
 

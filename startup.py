@@ -3,6 +3,7 @@ import os
 import time
 import signal
 import asyncio
+import logging
 
 # Ensure project root is in path
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -15,6 +16,8 @@ if hasattr(sys.stdout, 'reconfigure'):
 
 import config
 from database.db_manager import DatabaseManager
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s [startup] %(message)s')
+logger = logging.getLogger("startup")
 
 async def pre_startup_db_init():
     """
@@ -148,6 +151,11 @@ def main():
         print("\n👋 Stopping system...", flush=True)
         for p in processes:
             p.terminate()
+        for p in processes:
+            try:
+                p.wait(timeout=10)
+            except Exception:
+                p.kill()
         return 0
     except Exception as e:
         print(f"❌ Startup error: {e}", flush=True)

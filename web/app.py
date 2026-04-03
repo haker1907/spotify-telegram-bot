@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_file, render_template, g
+from flask import Flask, request, jsonify, send_file, render_template, g, has_request_context
 from flask_cors import CORS
 import asyncio
 import threading
@@ -10,6 +10,8 @@ import jwt
 import time
 from collections import defaultdict
 import requests
+import uuid
+import logging
 
 # Добавляем корневую директорию в путь для импорта модулей
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -20,6 +22,8 @@ from services.download_service import DownloadService
 from database.db_manager import DatabaseManager
 
 app = Flask(__name__)
+logger = logging.getLogger("web.app")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(name)s] [%(request_id)s] %(message)s")
 # CORS: ограничиваем доверенные origin
 allowed_origins_env = os.getenv("WEB_ALLOWED_ORIGINS", "").strip()
 if allowed_origins_env:
@@ -139,12 +143,7 @@ def require_admin(fn):
         if not user_id:
             return jsonify({"error": "Unauthorized"}), 401
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            is_admin = loop.run_until_complete(db.is_admin(user_id))
-        finally:
-            loop.close()
+        is_admin = run_async(db.is_admin(user_id))
 
         if not is_admin:
             return jsonify({"error": "Forbidden"}), 403
@@ -210,6 +209,42 @@ BACKUP_PERIOD = int(os.getenv("BACKUP_RATE_PERIOD_SECONDS", "600"))  # 10 мин
 # Telegram Storage Service будет инициализирован при первом использовании
 telegram_storage = None
 backup_service = None
+_async_runtime_loop = None
+_async_runtime_thread = None
+
+
+class RequestIdFilter(logging.Filter):
+    def filter(self, record):
+        if has_request_context():
+            record.request_id = getattr(g, "request_id", "-")
+        else:
+            record.request_id = "-"
+        return True
+
+
+logger.addFilter(RequestIdFilter())
+
+
+def _ensure_async_runtime():
+    global _async_runtime_loop, _async_runtime_thread
+    if _async_runtime_loop and _async_runtime_loop.is_running():
+        return _async_runtime_loop
+
+    _async_runtime_loop = asyncio.new_event_loop()
+
+    def _runner():
+        asyncio.set_event_loop(_async_runtime_loop)
+        _async_runtime_loop.run_forever()
+
+    _async_runtime_thread = threading.Thread(target=_runner, daemon=True)
+    _async_runtime_thread.start()
+    return _async_runtime_loop
+
+
+def run_async(coro):
+    loop = _ensure_async_runtime()
+    future = asyncio.run_coroutine_threadsafe(coro, loop)
+    return future.result()
 
 def get_telegram_storage():
     """Ленивая инициализация Telegram Storage Service"""
@@ -300,12 +335,20 @@ def ensure_db_initialized():
 @app.before_request
 def before_request():
     """Инициализация БД перед первым запросом, пропуск для health-check"""
+    g.request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())[:12]
     if request.path != '/health':
-        print(f"📥 [WEB] Request: {request.method} {request.path}", flush=True)
+        logger.info("Incoming request %s %s", request.method, request.path)
     
     if request.path == '/health':
         return
     ensure_db_initialized()
+
+
+@app.after_request
+def after_request(response):
+    if hasattr(g, "request_id"):
+        response.headers["X-Request-ID"] = g.request_id
+    return response
 
 @app.route('/health')
 def health_check():
@@ -335,10 +378,7 @@ def admin_users():
         limit = max(1, min(limit, 200))
         offset = max(0, offset)
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        users = loop.run_until_complete(db.get_users_overview_for_admin(limit=limit, offset=offset))
-        loop.close()
+        users = run_async(db.get_users_overview_for_admin(limit=limit, offset=offset))
 
         # JSON-сериализация datetime
         for u in users:
@@ -359,11 +399,13 @@ def admin_tracks():
     try:
         limit = int(request.args.get('limit', 50))
         limit = max(1, min(limit, 200))
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        tracks = loop.run_until_complete(db.get_tracks_overview_for_admin(limit=limit))
-        loop.close()
+        query = request.args.get('q', '').strip()
+        sort_by = request.args.get('sort_by', 'downloads_desc')
+        without_cover = request.args.get('without_cover', '0') in ('1', 'true', 'yes')
+        min_downloads = int(request.args.get('min_downloads', 0))
+        tracks = run_async(db.get_tracks_overview_for_admin_filtered(
+            limit=limit, query=query, sort_by=sort_by, without_cover=without_cover, min_downloads=min_downloads
+        ))
 
         return jsonify({'tracks': tracks})
     except Exception as e:
@@ -429,10 +471,8 @@ def admin_delete_track():
         if not track_id:
             return jsonify({'error': 'track_id is required'}), 400
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        success = loop.run_until_complete(db.delete_track_for_admin(track_id))
-        loop.close()
+        admin_id = getattr(g, "current_user_id", None)
+        success = run_async(db.delete_track_for_admin(track_id))
 
         if not success:
             return jsonify({'error': 'Track not found'}), 404
@@ -440,12 +480,11 @@ def admin_delete_track():
         # Write-through backup, чтобы изменения пережили redeploy
         try:
             backup_svc = get_backup_service()
-            backup_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(backup_loop)
-            backup_loop.run_until_complete(backup_svc.backup_to_telegram(force=True))
-            backup_loop.close()
+            run_async(backup_svc.backup_to_telegram(force=True))
         except Exception as e:
             print(f"⚠️ Admin delete backup failed: {e}")
+        if admin_id:
+            run_async(db.log_admin_action(admin_id, "delete_track", "track", str(track_id), "Deleted from admin panel"))
 
         return jsonify({'success': True})
     except Exception as e:
@@ -932,10 +971,7 @@ def authenticate():
             return jsonify({'error': 'Token is required'}), 400
 
         # Проверяем токен в БД (постоянная ссылка из /login)
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        user = loop.run_until_complete(db.verify_auth_token(token))
-        loop.close()
+        user = run_async(db.verify_auth_token(token))
 
         if not user:
             return jsonify({'error': 'Invalid or expired token'}), 401
@@ -977,10 +1013,7 @@ def get_me():
         user_id = getattr(g, 'current_user_id', None)
         if not user_id:
             return jsonify({'error': 'Unauthorized'}), 401
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        user = loop.run_until_complete(db.get_or_create_user(user_id))
-        loop.close()
+        user = run_async(db.get_or_create_user(user_id))
         return jsonify({
             'success': True,
             'user': {
@@ -994,6 +1027,23 @@ def get_me():
     except Exception as e:
         print(f"❌ Me error: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/api/audit-logs', methods=['GET'])
+@require_auth
+@require_admin
+def admin_audit_logs():
+    """Логи действий админа."""
+    try:
+        limit = int(request.args.get('limit', 50))
+        limit = max(1, min(limit, 200))
+        logs = run_async(db.get_admin_audit_logs(limit=limit))
+        for item in logs:
+            if item.get("created_at") and hasattr(item["created_at"], "isoformat"):
+                item["created_at"] = item["created_at"].isoformat()
+        return jsonify({"logs": logs})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/logout', methods=['POST'])

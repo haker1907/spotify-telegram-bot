@@ -146,6 +146,16 @@
             <div class="admin-card-title-row">
                 <h2>Tracks</h2>
                 <div class="admin-track-actions">
+                    <input id="trackQuery" class="text-input" style="max-width:220px; padding:8px;" placeholder="Search track/artist/id" />
+                    <select id="trackSort" class="text-input" style="max-width:160px; padding:8px;">
+                        <option value="downloads_desc">Downloads</option>
+                        <option value="name_asc">Name A-Z</option>
+                        <option value="name_desc">Name Z-A</option>
+                    </select>
+                    <label style="font-size:12px; opacity:.9;">
+                        <input type="checkbox" id="withoutCoverOnly" />
+                        No cover
+                    </label>
                     <div class="admin-view-toggle" id="tracksViewToggle" title="View">
                         <button type="button" class="active" data-view="grid">Grid</button>
                         <button type="button" data-view="list">List</button>
@@ -154,6 +164,12 @@
             </div>
             <div id="tracksList"></div>
         </div>
+        <div class="admin-card">
+            <div class="admin-card-title-row">
+                <h2>Admin audit log</h2>
+            </div>
+            <div id="auditList"></div>
+        </div>
     </div>
 
     <script>
@@ -161,6 +177,7 @@
         const tracksList = document.getElementById('tracksList');
         const refreshBtn = document.getElementById('refreshBtn');
         const adminAuthMsg = document.getElementById('adminAuthMsg');
+        const auditList = document.getElementById('auditList');
 
         function showMsg(text) {
             adminAuthMsg.textContent = text || '';
@@ -255,6 +272,24 @@
             return data;
         }
 
+        function renderAudit(logs) {
+            if (!logs || logs.length === 0) {
+                auditList.innerHTML = '<div style="opacity:0.8;">No audit logs</div>';
+                return;
+            }
+            const rows = logs.map(l => `
+                <tr>
+                    <td>${l.created_at || ''}</td>
+                    <td class="mono">${l.admin_user_id || ''}</td>
+                    <td>${l.action || ''}</td>
+                    <td>${l.target_type || ''}</td>
+                    <td class="mono">${l.target_id || ''}</td>
+                    <td>${l.details || ''}</td>
+                </tr>
+            `).join('');
+            auditList.innerHTML = `<table class="admin-table"><thead><tr><th>At</th><th>Admin</th><th>Action</th><th>Type</th><th>Target</th><th>Details</th></tr></thead><tbody>${rows}</tbody></table>`;
+        }
+
         async function loadAdmin() {
             try {
                 refreshBtn.disabled = true;
@@ -263,11 +298,15 @@
                 tracksList.innerHTML = 'Loading...';
 
                 const usersData = await apiGet('/admin/api/users?limit=50&offset=0');
-                // Берём тот же список, что и в Discover (Library)
-                const tracksData = await apiGet('/api/library?limit=50');
+                const trackQuery = encodeURIComponent(document.getElementById('trackQuery').value || '');
+                const sortBy = encodeURIComponent(document.getElementById('trackSort').value || 'downloads_desc');
+                const noCover = document.getElementById('withoutCoverOnly').checked ? 1 : 0;
+                const tracksData = await apiGet(`/admin/api/tracks?limit=80&q=${trackQuery}&sort_by=${sortBy}&without_cover=${noCover}`);
+                const auditData = await apiGet('/admin/api/audit-logs?limit=50');
 
                 renderUsers(usersData.users || []);
                 renderTracks(tracksData.tracks || []);
+                renderAudit(auditData.logs || []);
 
                 showMsg('');
             } catch (e) {
@@ -307,6 +346,9 @@
 
         loadAdmin();
         refreshBtn.addEventListener('click', loadAdmin);
+        document.getElementById('trackQuery').addEventListener('input', () => loadAdmin());
+        document.getElementById('trackSort').addEventListener('change', () => loadAdmin());
+        document.getElementById('withoutCoverOnly').addEventListener('change', () => loadAdmin());
 
         // View toggle (grid/list) для треков как в Discover
         const tracksViewToggle = document.getElementById('tracksViewToggle');

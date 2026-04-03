@@ -12,6 +12,7 @@ STRINGS = {
         "btn_help": "ℹ️ Помощь",
         "btn_back": "◀️ Назад",
         "btn_my_playlists": "📋 Плейлисты",
+        "btn_share_bot": "📣 Поделиться ботом",
         
         # Настройки
         "settings_title": "⚙️ <b>Настройки</b>",
@@ -62,6 +63,8 @@ STRINGS = {
         
         # Поиск
         "search_welcome": "🔍 <b>Поиск музыки</b>\n\nОтправьте мне ссылку на трек из Spotify, и я скачаю его для вас!\n\nПример:\n<code>https://open.spotify.com/track/...</code>",
+        "welcome_message": "🎵 <b>Добро пожаловать в Music Download Bot!</b>\n\nЯ автоматически скачиваю музыку из Spotify!\n\n<b>Как использовать:</b>\n1. Откройте Spotify и найдите трек\n2. Нажмите \"Поделиться\" -> \"Копировать ссылку\"\n3. Отправьте мне ссылку\n4. Получите MP3/FLAC файл!\n\n<b>Пример ссылки:</b>\n<code>https://open.spotify.com/track/...</code>",
+        "help_message": "📖 <b>Как пользоваться ботом</b>\n\n1. Найдите трек в Spotify\n2. Скопируйте ссылку\n3. Отправьте ссылку боту\n4. Получите аудио файл\n\nДополнительно:\n• /myplaylists - плейлисты\n• /favorites - избранное\n• /settings - качество и формат",
         "downloading": "📥 <b>Загрузка...</b>\n\n<i>{name} - {artist}</i>\n\nПожалуйста, подождите.",
         "searching": "🔍 Ищу информацию о треке...",
         "from_cache": "📤 Отправляю из кэша...",
@@ -95,6 +98,14 @@ STRINGS = {
         "history_title": "📜 <b>История скачиваний (последние {count}):</b>\n\n",
         "btn_clear_history": "🗑️ Очистить историю",
         "history_cleared": "✅ История скачиваний очищена",
+        "favorites_title": "⭐ <b>Избранные треки</b>",
+        "favorites_total": "Всего: {count}",
+        "favorites_added": "Добавлено",
+        "favorites_more": "ещё {count} треков",
+        "favorites_added_ok": "⭐ Добавлено в избранное!",
+        "favorites_removed_ok": "💔 Удалено из избранного",
+        "share_after_download": "📣 Поделитесь ботом с друзьями",
+        "share_text": "Скачивай музыку из Spotify в Telegram быстро и удобно!",
         
         # Общие кнопки
         "btn_cancel": "❌ Отмена",
@@ -110,6 +121,7 @@ STRINGS = {
         "btn_help": "ℹ️ Help",
         "btn_back": "◀️ Back",
         "btn_my_playlists": "📋 Playlists",
+        "btn_share_bot": "📣 Share bot",
         
         # Settings
         "settings_title": "⚙️ <b>Settings</b>",
@@ -160,6 +172,8 @@ STRINGS = {
         
         # Search
         "search_welcome": "🔍 <b>Music Search</b>\n\nSend me a Spotify track link, and I'll download it for you!\n\nExample:\n<code>https://open.spotify.com/track/...</code>",
+        "welcome_message": "🎵 <b>Welcome to Music Download Bot!</b>\n\nI can automatically download music from Spotify links.\n\n<b>How to use:</b>\n1. Open Spotify and find a track\n2. Tap Share -> Copy link\n3. Send the link to me\n4. Get MP3/FLAC file!",
+        "help_message": "📖 <b>How to use the bot</b>\n\n1. Find a track on Spotify\n2. Copy the track link\n3. Send it to the bot\n4. Receive an audio file\n\nAlso:\n• /myplaylists - playlists\n• /favorites - favorites\n• /settings - quality and format",
         "downloading": "📥 <b>Downloading...</b>\n\n<i>{name} - {artist}</i>\n\nPlease wait.",
         "searching": "🔍 Searching for track info...",
         "from_cache": "📤 Sending from cache...",
@@ -193,6 +207,14 @@ STRINGS = {
         "history_title": "📜 <b>Download history (last {count}):</b>\n\n",
         "btn_clear_history": "🗑️ Clear history",
         "history_cleared": "✅ Download history cleared",
+        "favorites_title": "⭐ <b>Favorite Tracks</b>",
+        "favorites_total": "Total: {count}",
+        "favorites_added": "Added",
+        "favorites_more": "{count} more tracks",
+        "favorites_added_ok": "⭐ Added to favorites!",
+        "favorites_removed_ok": "💔 Removed from favorites",
+        "share_after_download": "📣 Share this bot with friends",
+        "share_text": "Download Spotify music in Telegram quickly and easily!",
         
         # Common Buttons
         "btn_cancel": "❌ Cancel",

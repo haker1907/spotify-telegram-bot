@@ -59,6 +59,7 @@ from handlers.settings import (
 )
 # Обработчик кнопок меню
 from handlers.menu import handle_menu_buttons
+from handlers.favorites import favorites_command, add_to_favorites_callback, remove_from_favorites_callback
 
 async def post_init(application: Application) -> None:
     """Инициализация после запуска (после pre-startup в startup.py)."""
@@ -89,7 +90,8 @@ async def post_init(application: Application) -> None:
         
         # 4. Запускаем периодический backup
         application.bot_data['backup_service'] = backup_service
-        asyncio.create_task(backup_service.start_periodic_backup(interval=300))
+        periodic_backup_task = asyncio.create_task(backup_service.start_periodic_backup(interval=300))
+        application.bot_data['periodic_backup_task'] = periodic_backup_task
         print("✅ Periodic database backup started (every 5 minutes)")
         
         logger.info("✅ Бот успешно инициализирован")
@@ -116,6 +118,9 @@ async def post_shutdown(application: Application):
     """Очистка при остановке бота"""
     # 1. Делаем финальный бэкап
     backup_service = application.bot_data.get('backup_service')
+    periodic_backup_task = application.bot_data.get('periodic_backup_task')
+    if periodic_backup_task and not periodic_backup_task.done():
+        periodic_backup_task.cancel()
     if backup_service:
         print("🛑 Shutting down... Creating final database backup...", flush=True)
         await backup_service.backup_to_telegram(force=True)
@@ -168,6 +173,7 @@ def main():
     application.add_handler(CommandHandler("history", history_command))
     application.add_handler(CommandHandler("clearhistory", clear_history_command))
     application.add_handler(CommandHandler("settings", settings_command))
+    application.add_handler(CommandHandler("favorites", favorites_command))
     
     # ========== CONVERSATION HANDLER ДЛЯ СОЗДАНИЯ ПЛЕЙЛИСТА ==========
     
@@ -201,6 +207,7 @@ def main():
             STRINGS[l]["btn_my_playlists"],
             STRINGS[l]["btn_help"],
             STRINGS[l]["btn_search"],
+            STRINGS[l]["btn_favorites"],
             STRINGS[l]["btn_back"]
         ])
     
@@ -235,6 +242,8 @@ def main():
     application.add_handler(CallbackQueryHandler(add_to_playlist_callback, pattern=r'^addto_'))
     application.add_handler(CallbackQueryHandler(select_playlist_callback, pattern=r'^pladd_'))
     application.add_handler(CallbackQueryHandler(cancel_playlist_selection_callback, pattern=r'^plcancel_'))
+    application.add_handler(CallbackQueryHandler(add_to_favorites_callback, pattern=r'^fav_'))
+    application.add_handler(CallbackQueryHandler(remove_from_favorites_callback, pattern=r'^unfav_'))
     
     # Общий обработчик callback'ов (для остальных)
     application.add_handler(CallbackQueryHandler(handle_callback))

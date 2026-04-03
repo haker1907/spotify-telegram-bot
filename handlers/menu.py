@@ -7,6 +7,7 @@ from handlers.history import history_command
 from handlers.playlist import my_playlists_command
 from handlers.settings import settings_command
 from handlers.start import help_command
+from handlers.favorites import favorites_command
 
 
 from utils.strings import get_string
@@ -32,6 +33,8 @@ async def handle_menu_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE
         await my_playlists_command(update, context)
     elif text in [get_string("btn_help", "ru"), get_string("btn_help", "en")]:
         await help_command(update, context)
+    elif text in [get_string("btn_favorites", "ru"), get_string("btn_favorites", "en")]:
+        await favorites_command(update, context)
     elif text in [get_string("btn_search", "ru"), get_string("btn_search", "en")]:
         await update.message.reply_text(
             get_string("search_welcome", lang),

@@ -78,6 +78,10 @@
                 </div>
             </div>
         </header>
+        <div style="padding: 0 32px 8px; color: #b3b3b3; font-size: 13px;">
+            Start in Telegram: <code>/login</code>
+            <button class="sync-btn" style="margin-left:8px;" onclick="navigator.clipboard.writeText('/login')">Copy command</button>
+        </div>
 
         <!-- Search Results -->
         <div id="searchResults" class="content-section active">
@@ -188,6 +192,7 @@
                 <input type="range" class="progress-slider" id="progressSlider" min="0" max="100" value="0">
                 <span class="time-total" id="totalTime">0:00</span>
             </div>
+            <div class="queue-status" id="queueStatus">Queue: empty</div>
         </div>
 
         <div class="player-volume">

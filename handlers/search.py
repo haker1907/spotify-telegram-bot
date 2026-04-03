@@ -13,6 +13,7 @@ from utils.strings import get_string
 from utils.keyboards import (
     get_search_results_keyboard, 
     get_track_actions_keyboard,
+    get_collection_keyboard,
     KeyboardBuilder
 )
 
@@ -71,7 +72,7 @@ async def handle_spotify_link(update: Update, context: ContextTypes.DEFAULT_TYPE
             message += "Выберите трек для скачивания:" if lang == "ru" else "Select a track to download:"
 
             # Используем существующую клавиатуру поиска для первых 10 треков
-            keyboard = get_search_results_keyboard(info['tracks'][:10])
+            keyboard = get_collection_keyboard(info['tracks'][:10], parsed['type'], parsed['id'], lang=lang)
             
             await status_msg.edit_text(message, reply_markup=keyboard, parse_mode='HTML')
             return
@@ -162,9 +163,8 @@ async def handle_spotify_link(update: Update, context: ContextTypes.DEFAULT_TYPE
                           f"🎧 {format_label} • {quality_display}\n" + \
                           (f"✨ From library" if lang == "en" else f"✨ Из библиотеки")
                 
-                keyboard = get_track_actions_keyboard(track_id)
-                
-                keyboard = get_track_actions_keyboard(track_id)
+                is_fav = await db.is_favorite(user_id, track_id) if db else False
+                keyboard = get_track_actions_keyboard(track_id, is_favorite=is_fav, lang=lang)
                 
                 # Скачиваем обложку для thumbnail если есть
                 thumb_path = None
@@ -194,6 +194,7 @@ async def handle_spotify_link(update: Update, context: ContextTypes.DEFAULT_TYPE
                 # Отдельное сообщение с клавиатурой
                 action_msg = "📝 <b>Действия с треком:</b>" if lang == "ru" else "📝 <b>Track actions:</b>"
                 await update.message.reply_text(action_msg, reply_markup=keyboard, parse_mode='HTML')
+                await update.message.reply_text(get_string("share_after_download", lang), reply_markup=keyboard, parse_mode='HTML')
                 
                 await status_msg.delete()
                 # Записываем в историю
@@ -292,9 +293,8 @@ async def handle_spotify_link(update: Update, context: ContextTypes.DEFAULT_TYPE
                 
                 # Проверяем, в избранном ли трек
                 is_fav = await db.is_favorite(user_id, track_id) if db else False
-                keyboard = get_track_actions_keyboard(track_id)
-                
-                keyboard = get_track_actions_keyboard(track_id)
+                is_fav = await db.is_favorite(user_id, track_id) if db else False
+                keyboard = get_track_actions_keyboard(track_id, is_favorite=is_fav, lang=lang)
                 
                 # Скачиваем обложку для thumbnail если есть
                 thumb_path = None
@@ -350,6 +350,7 @@ async def handle_spotify_link(update: Update, context: ContextTypes.DEFAULT_TYPE
             
             # Удаляем статусное сообщение
             await status_msg.delete()
+            await update.message.reply_text(get_string("share_after_download", lang), reply_markup=keyboard, parse_mode='HTML')
             
             # Удаляем временный файл
             download_service.cleanup_file(result['file_path'])

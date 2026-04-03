@@ -4,7 +4,7 @@
 from telegram import Update
 from telegram.ext import ContextTypes
 from utils.keyboards import KeyboardBuilder
-import config
+from utils.strings import get_string
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -23,15 +23,20 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         lang = user_db.language
     
+    # Реферальный deeplink: /start ref_<telegram_user_id>
+    if db and context.args:
+        ref_arg = str(context.args[0]).strip()
+        if ref_arg.startswith("ref_"):
+            try:
+                referrer_id = int(ref_arg.replace("ref_", ""))
+                if referrer_id != user_obj.id and hasattr(db, "save_referral"):
+                    await db.save_referral(user_obj.id, referrer_id)
+            except ValueError:
+                pass
+
     # Отправляем приветственное сообщение
     keyboard = KeyboardBuilder.main_menu(lang)
-    
-    # В конфиге WELCOME_MESSAGE только на русском, 
-    # если язык английский, можно использовать строку из strings.py или перевести
-    welcome_text = config.WELCOME_MESSAGE
-    if lang == "en":
-        welcome_text = welcome_text.replace("Привет!", "Hello!").replace("Я помогу тебе скачать музыку из Spotify.", "I can help you download music from Spotify.")
-        # Или можно добавить welcome_msg в strings.py, но пока так
+    welcome_text = get_string("welcome_message", lang)
     
     await update.message.reply_text(
         welcome_text,
@@ -51,13 +56,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     keyboard = KeyboardBuilder.back_button(lang)
     
-    help_text = config.HELP_MESSAGE
-    if lang == "en":
-        help_text = "📖 <b>How to use the bot:</b>\n\n" \
-                    "1. Find a track on <b>Spotify</b>\n" \
-                    "2. Copy the link to the track\n" \
-                    "3. Send the link to this bot\n" \
-                    "4. Wait for the download and enjoy! 🎧"
+    help_text = get_string("help_message", lang)
                     
     await update.message.reply_text(
         help_text,

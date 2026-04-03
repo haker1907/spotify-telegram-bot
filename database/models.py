@@ -2,7 +2,7 @@
 Модели базы данных SQLAlchemy
 """
 from datetime import datetime
-from sqlalchemy import BigInteger, String, Integer, DateTime, ForeignKey, Text
+from sqlalchemy import BigInteger, String, Integer, DateTime, ForeignKey, Text, Index
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from typing import List, Optional
 
@@ -34,6 +34,8 @@ class User(Base):
     # Статистика (Функция 9)
     total_downloads: Mapped[int] = mapped_column(Integer, default=0)
     total_size_mb: Mapped[float] = mapped_column(Integer, default=0)  # Используем Integer для SQLite
+    referred_by: Mapped[Optional[int]] = mapped_column(BigInteger, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    referrals_count: Mapped[int] = mapped_column(Integer, default=0)
     
     # Связи
     playlists: Mapped[List["Playlist"]] = relationship(back_populates="user", cascade="all, delete-orphan")
@@ -233,3 +235,25 @@ class BackupLog(Base):
     
     def __repr__(self):
         return f"<BackupLog(id={self.id}, message_id={self.message_id})>"
+
+
+class AdminAuditLog(Base):
+    """Логи действий админа"""
+    __tablename__ = 'admin_audit_logs'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    admin_user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    action: Mapped[str] = mapped_column(String(64))
+    target_type: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    target_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<AdminAuditLog(action={self.action}, admin={self.admin_user_id})>"
+
+
+Index("ix_track_cache_track_format_quality", TrackCache.track_id, TrackCache.file_format, TrackCache.quality)
+Index("ix_download_history_user_downloaded", DownloadHistory.user_id, DownloadHistory.downloaded_at)
+Index("ix_telegram_files_artist_track", TelegramFile.artist, TelegramFile.track_name)
+Index("ix_tracks_download_count", Track.download_count)

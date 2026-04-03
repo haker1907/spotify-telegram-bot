@@ -8,7 +8,6 @@ from utils.keyboards import KeyboardBuilder, get_track_actions_keyboard
 from services.message_builder import MessageBuilder
 from services.download_service import DownloadService
 from utils.strings import get_string
-import config
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -47,6 +46,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await open_in_spotify(query, context, callback_data, lang)
     elif callback_data.startswith("add_to_playlist_"):
         await show_playlist_selection(query, context, callback_data, lang)
+    elif callback_data.startswith("batchdl_"):
+        await batch_download_collection(query, context, callback_data, lang)
     
     # Работа с плейлистами
     elif callback_data.startswith("select_playlist_"):
@@ -82,10 +83,7 @@ async def show_main_menu(query, context, lang="ru"):
     """Показать главное меню"""
     keyboard = KeyboardBuilder.main_menu(lang)
     
-    # Локализация приветствия (как в start_command)
-    welcome_text = config.WELCOME_MESSAGE
-    if lang == "en":
-        welcome_text = welcome_text.replace("Привет!", "Hello!").replace("Я помогу тебе скачать музыку из Spotify.", "I can help you download music from Spotify.")
+    welcome_text = get_string("welcome_message", lang)
         
     await query.message.edit_text(
         welcome_text,
@@ -98,13 +96,7 @@ async def show_help(query, context, lang="ru"):
     """Показать справку"""
     keyboard = KeyboardBuilder.back_button(lang)
     
-    help_text = config.HELP_MESSAGE
-    if lang == "en":
-        help_text = "📖 <b>How to use the bot:</b>\n\n" \
-                    "1. Find a track on <b>Spotify</b>\n" \
-                    "2. Copy the link to the track\n" \
-                    "3. Send the link to this bot\n" \
-                    "4. Wait for the download and enjoy! 🎧"
+    help_text = get_string("help_message", lang)
                     
     await query.message.edit_text(
         help_text,
@@ -231,7 +223,8 @@ async def download_track(query, context, callback_data, lang="ru"):
                 format_label = file_format.upper() if found_in_cache_specific else "AUDIO"
                 caption = f"🎵 <b>{track.name}</b>\n👤 {track.artist}\n\n🎧 {format_label} • {quality_display}\n" + \
                           (f"✨ From library" if lang == "en" else f"✨ Из библиотеки")
-                keyboard = get_track_actions_keyboard(track_id)
+                is_fav = await db.is_favorite(query.from_user.id, track_id) if db else False
+                keyboard = get_track_actions_keyboard(track_id, is_favorite=is_fav, lang=lang)
                 
                 # Скачиваем обложку для thumbnail если есть
                 thumb_path = None
@@ -318,9 +311,8 @@ async def download_track(query, context, callback_data, lang="ru"):
                     else: quality_display = "Lossless"
                 format_label = file_format.upper()
                 caption = f"🎵 <b>{track.name}</b>\n👤 {track.artist}\n\n🎧 {format_label} • {quality_display}"
-                keyboard = get_track_actions_keyboard(track_id)
-                
-                keyboard = get_track_actions_keyboard(track_id)
+                is_fav = await db.is_favorite(query.from_user.id, track_id) if db else False
+                keyboard = get_track_actions_keyboard(track_id, is_favorite=is_fav, lang=lang)
                 
                 # Скачиваем обложку для thumbnail если есть
                 thumb_path = None
@@ -644,6 +636,42 @@ async def delete_playlist(query, context, callback_data, lang="ru"):
             "❌ Error" if lang == "en" else "❌ Не удалось удалить плейлист",
             parse_mode='HTML'
         )
+
+
+async def batch_download_collection(query, context, callback_data, lang="ru"):
+    """Пакетное скачивание первых треков коллекции."""
+    parts = callback_data.split("_", 2)
+    if len(parts) < 3:
+        return
+    collection_type, collection_id = parts[1], parts[2]
+    spotify_service = context.bot_data.get("spotify")
+    if not spotify_service:
+        await query.message.reply_text("❌ Spotify service unavailable")
+        return
+
+    try:
+        if collection_type == "album":
+            info = await spotify_service.get_album_info(f"https://open.spotify.com/album/{collection_id}")
+        elif collection_type == "playlist":
+            info = await spotify_service.get_playlist_info(f"https://open.spotify.com/playlist/{collection_id}")
+        else:
+            info = await spotify_service.get_artist_info(f"https://open.spotify.com/artist/{collection_id}")
+
+        tracks = (info or {}).get("tracks", [])[:10]
+        if not tracks:
+            await query.message.reply_text("❌ Нет треков для скачивания" if lang == "ru" else "❌ No tracks to download")
+            return
+
+        await query.message.reply_text(
+            f"⏳ {'Запускаю пакетное скачивание' if lang == 'ru' else 'Starting batch download'}: {len(tracks)}"
+        )
+        for t in tracks:
+            track_id = t.get("id")
+            if not track_id:
+                continue
+            await download_track(query, context, f"download_{track_id}", lang=lang)
+    except Exception as e:
+        await query.message.reply_text(f"❌ Batch error: {e}")
 
 
 

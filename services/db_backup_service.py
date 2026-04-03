@@ -4,6 +4,8 @@ Database Backup Service - автоматический backup и восстан�
 import os
 import asyncio
 import shutil
+import sqlite3
+import tempfile
 from datetime import datetime
 from typing import Optional
 import httpx
@@ -53,6 +55,8 @@ class DatabaseBackupService:
                 print("ℹ️  No backup found in Telegram, using local database (if exists)")
                 return False
             
+            force_restore = os.getenv("FORCE_RESTORE_FROM_TELEGRAM", "true").strip().lower() in ("1", "true", "yes", "on")
+
             # Если локальный файл существует, проверим, нужно ли его заменять
             if os.path.exists(self.db_path):
                 local_size = os.path.getsize(self.db_path)
@@ -78,8 +82,11 @@ class DatabaseBackupService:
                     except Exception as e:
                          print(f"⚠️ Error checking library state: {e}")
                 
+                # Если включен принудительный restore — всегда берём Telegram backup.
+                if force_restore:
+                    print("🔄 FORCE_RESTORE_FROM_TELEGRAM=true, restoring from Telegram backup...")
                 # Если библиотека пуста (результат деплоя), или файл подозрительно маленький
-                if is_empty:
+                elif is_empty:
                     print(f"⚠️  Local library is EMPTY. Forcing restoration from Telegram...")
                 elif local_size < 32768: # 32KB - это примерно пустая БД со схемой
                     print(f"⚠️  Local database is too small ({local_size} bytes), overwriting with backup...")
@@ -134,14 +141,16 @@ class DatabaseBackupService:
                 print(f"⚠️  Database file not found: {self.db_path}")
                 return False
             
-            file_size = os.path.getsize(self.db_path)
+            snapshot_path = self._create_sqlite_snapshot()
+            source_path = snapshot_path or self.db_path
+            file_size = os.path.getsize(source_path)
             print(f"💾 Creating database backup ({file_size / 1024:.2f} KB)...")
             
             # Загружаем БД как document в Telegram
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             caption = f"🗄️ Database Backup - {timestamp}"
             
-            result = self.storage.upload_document(self.db_path, caption)
+            result = self.storage.upload_document(source_path, caption)
             
             if result and result.get('file_id'):
                 self.backup_file_id = result['file_id']
@@ -201,6 +210,40 @@ class DatabaseBackupService:
             import traceback
             traceback.print_exc()
             return False
+        finally:
+            try:
+                if 'snapshot_path' in locals() and snapshot_path and os.path.exists(snapshot_path):
+                    os.remove(snapshot_path)
+            except Exception:
+                pass
+
+    def _create_sqlite_snapshot(self) -> Optional[str]:
+        """
+        Создать консистентный snapshot SQLite (с учетом WAL) во временный файл.
+        Возвращает путь к временному файлу или None (fallback на self.db_path).
+        """
+        try:
+            if not self.db_path or not os.path.exists(self.db_path):
+                return None
+
+            fd, tmp_path = tempfile.mkstemp(prefix="db_backup_", suffix=".db")
+            os.close(fd)
+
+            src = sqlite3.connect(self.db_path, timeout=30)
+            dst = sqlite3.connect(tmp_path, timeout=30)
+            try:
+                # Подтягиваем WAL-изменения перед snapshot
+                src.execute("PRAGMA wal_checkpoint(PASSIVE)")
+                src.backup(dst)
+                dst.commit()
+            finally:
+                dst.close()
+                src.close()
+
+            return tmp_path
+        except Exception as e:
+            print(f"⚠️ Could not create SQLite snapshot, fallback to raw DB file: {e}")
+            return None
     
     async def start_periodic_backup(self, interval: int = 300):
         """

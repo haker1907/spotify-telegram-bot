@@ -367,20 +367,30 @@ def admin_tracks():
 
         # Подтягиваем обложки "на лету" (как в Discover) для треков без image.
         # Важно: делаем это ограниченно, чтобы не тормозить админку на больших лимитах.
-        missing = [t for t in (tracks or []) if not t.get('image') and t.get('spotify_url')]
+        missing = [t for t in (tracks or []) if not t.get('image')]
         missing = missing[:20]  # safety cap per request
         if missing:
             async def _enrich(items: list[dict]):
                 sem = asyncio.Semaphore(5)
 
                 async def one(t: dict):
-                    url = t.get('spotify_url')
-                    if not url:
-                        return
                     async with sem:
-                        info = await spotify_service.get_track_info_from_url(url)
+                        # 1) Если есть полноценный Spotify track URL — берём обложку через oEmbed/embed
+                        url = t.get('spotify_url') or ''
+                        info = None
+                        if isinstance(url, str) and '/track/' in url:
+                            info = await spotify_service.get_track_info_from_url(url)
                         if info and info.get('image_url'):
                             t['image'] = info.get('image_url')
+                            return
+
+                        # 2) Фолбэк как в Discover: ищем по тексту (artist + name)
+                        q = f"{t.get('artist') or ''} {t.get('name') or ''}".strip()
+                        if not q:
+                            return
+                        results = await spotify_service.search_tracks(q, limit=1)
+                        if results and results[0].get('image_url'):
+                            t['image'] = results[0].get('image_url')
 
                 await asyncio.gather(*(one(t) for t in items), return_exceptions=True)
 

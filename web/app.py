@@ -273,8 +273,6 @@ def index():
 
 
 @app.route('/admin', methods=['GET'])
-@require_auth
-@require_admin
 def admin_page():
     """Админ-панель (минимальная)."""
     return render_template('admin.html')

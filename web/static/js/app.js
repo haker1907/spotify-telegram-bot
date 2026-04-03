@@ -24,6 +24,10 @@ let isShuffleEnabled = false;
 let currentPlaylist = [];
 let currentTrackIndex = -1;
 let currentCardPlayBtn = null;
+let pendingSeekSeconds = null;
+
+const PLAYBACK_STORAGE_KEY = 'playbackStateV1';
+let lastPlaybackSaveAt = 0;
 
 // Initialize app
 document.addEventListener('DOMContentLoaded', () => {
@@ -121,7 +125,7 @@ function renderHistoryItem(item, index) {
     const quality = item.quality || '';
 
     return `
-        <div class="history-item" role="button" tabindex="0" onclick="playTrack(null, historyData[${index}])">
+        <div class="history-item" role="button" tabindex="0" onclick="playHistoryIndex(${index})">
             <div class="track-image history-thumb">
                 <svg viewBox="0 0 24 24" fill="currentColor" class="history-thumb-icon">
                     <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
@@ -137,6 +141,18 @@ function renderHistoryItem(item, index) {
             </div>
         </div>
     `;
+}
+
+function playHistoryIndex(index) {
+    const idx = Number(index);
+    if (!Number.isFinite(idx)) return;
+    const track = historyData?.[idx];
+    if (!track) return;
+    // Очередь = история, чтобы next/prev работали "как Spotify"
+    currentPlaylist = historyData.filter(Boolean);
+    const actualIndex = currentPlaylist.findIndex(t => t && t.id === track.id);
+    currentTrackIndex = actualIndex >= 0 ? actualIndex : 0;
+    playTrack(null, track);
 }
 
 async function loadHistory(limit = 10) {
@@ -631,6 +647,16 @@ async function playFromYouTube(track) {
 
         showNotification('Preparing track...', 'info');
 
+        // Автоподхват сохранённой позиции для этого трека (если есть)
+        pendingSeekSeconds = null;
+        try {
+            const raw = localStorage.getItem(PLAYBACK_STORAGE_KEY);
+            const state = raw ? JSON.parse(raw) : null;
+            if (state && state.trackId && state.trackId === track.id && typeof state.position === 'number' && state.position > 2) {
+                pendingSeekSeconds = state.position;
+            }
+        } catch (_) {}
+
         const response = await fetch('/api/prepare-stream', {
             method: 'POST',
             headers: {
@@ -655,6 +681,21 @@ async function playFromYouTube(track) {
                 console.error('Play error:', err);
                 showNotification('Could not play track', 'error');
             });
+            if (pendingSeekSeconds != null) {
+                const seekTo = pendingSeekSeconds;
+                const onMeta = () => {
+                    try {
+                        // не прыгаем почти в конец
+                        if (audioPlayer.duration && seekTo < (audioPlayer.duration - 2)) {
+                            audioPlayer.currentTime = seekTo;
+                        }
+                    } finally {
+                        audioPlayer.removeEventListener('loadedmetadata', onMeta);
+                        pendingSeekSeconds = null;
+                    }
+                };
+                audioPlayer.addEventListener('loadedmetadata', onMeta);
+            }
             updatePlayerUI(track);
             updatePlayButton(true);
 
@@ -707,6 +748,19 @@ function initializePlayer() {
         const progress = (audioPlayer.currentTime / audioPlayer.duration) * 100;
         progressSlider.value = progress;
         currentTimeEl.textContent = formatTime(audioPlayer.currentTime);
+
+        // Сохраняем позицию (throttle ~1.5s)
+        const now = Date.now();
+        if (currentTrack?.id && (now - lastPlaybackSaveAt) > 1500) {
+            lastPlaybackSaveAt = now;
+            try {
+                localStorage.setItem(PLAYBACK_STORAGE_KEY, JSON.stringify({
+                    trackId: currentTrack.id,
+                    position: audioPlayer.currentTime,
+                    updatedAt: now
+                }));
+            } catch (_) {}
+        }
     });
 
     // Установка общей длительности
@@ -731,6 +785,18 @@ function initializePlayer() {
     });
 
     audioPlayer.addEventListener('ended', () => {
+        // Сброс сохранённой позиции, чтобы при следующем старте не начинать "с конца"
+        if (currentTrack?.id) {
+            try {
+                const raw = localStorage.getItem(PLAYBACK_STORAGE_KEY);
+                const state = raw ? JSON.parse(raw) : null;
+                if (state && state.trackId === currentTrack.id) {
+                    state.position = 0;
+                    state.updatedAt = Date.now();
+                    localStorage.setItem(PLAYBACK_STORAGE_KEY, JSON.stringify(state));
+                }
+            } catch (_) {}
+        }
         if (isRepeatEnabled) {
             // Repeat current track
             audioPlayer.currentTime = 0;

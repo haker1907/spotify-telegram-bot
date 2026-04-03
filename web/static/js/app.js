@@ -16,6 +16,8 @@ const HISTORY_PAGE_SIZE = 20;
 let libraryRendered = 0;
 let historyRendered = 0;
 let historyItemsRaw = [];
+let isHistoryChunkLoading = false;
+let isLibraryChunkLoading = false;
 
 // Player state variables
 let isRepeatEnabled = false;
@@ -96,13 +98,13 @@ function renderHistorySkeletons(count = 8) {
     const items = [];
     for (let i = 0; i < count; i++) {
         items.push(`
-            <div class="history-item" style="opacity:0.9;">
-                <div class="skeleton-img" style="width:40px;height:40px;aspect-ratio:1;margin-bottom:0;"></div>
-                <div style="flex:1;">
-                    <div class="skeleton-row" style="width: 75%; height: 12px; margin-bottom: 8px;"></div>
-                    <div class="skeleton-row" style="width: 55%; height: 10px; margin-bottom: 0;"></div>
+            <div class="history-item history-item-skeleton">
+                <div class="skeleton-img history-thumb-skeleton"></div>
+                <div class="history-main-col">
+                    <div class="skeleton-row history-line-primary"></div>
+                    <div class="skeleton-row history-line-secondary"></div>
                 </div>
-                <div class="skeleton-row" style="width:60px; height: 10px; margin-bottom: 0;"></div>
+                <div class="skeleton-row history-line-meta"></div>
             </div>
         `);
     }
@@ -122,18 +124,18 @@ function renderHistoryItem(item, index) {
 
     return `
         <div class="history-item" role="button" tabindex="0" onclick="playTrack(null, historyData[${index}])">
-            <div class="track-image" style="width:40px;height:40px;aspect-ratio:1;border-radius:6px;display:flex;align-items:center;justify-content:center;">
-                <svg viewBox="0 0 24 24" fill="currentColor" style="opacity:0.9;">
+            <div class="track-image history-thumb">
+                <svg viewBox="0 0 24 24" fill="currentColor" class="history-thumb-icon">
                     <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
                 </svg>
             </div>
-            <div style="flex:1; min-width:0;">
-                <div class="track-name" style="font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${name}</div>
-                <div class="track-artist" style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${artist}</div>
+            <div class="history-main-col">
+                <div class="track-name history-track-name">${name}</div>
+                <div class="track-artist history-track-artist">${artist}</div>
             </div>
-            <div style="text-align:right;">
-                <div style="font-size:12px;color:rgba(255,255,255,0.7);">${quality}</div>
-                <div style="font-size:11px;color:rgba(255,255,255,0.55);">${downloadedAtText}</div>
+            <div class="history-meta-col">
+                <div class="history-quality">${quality}</div>
+                <div class="history-date">${downloadedAtText}</div>
             </div>
         </div>
     `;
@@ -161,7 +163,7 @@ async function loadHistory(limit = 10) {
 
         if (!historyList) return;
         if (!data.history || data.history.length === 0) {
-            historyList.innerHTML = '<p style="text-align:center;color: var(--spotify-light-gray); padding: 48px 0;">No history yet</p>';
+            historyList.innerHTML = window.AppUI.emptyState('No history yet');
             return;
         }
 
@@ -175,11 +177,20 @@ async function loadHistory(limit = 10) {
 function renderHistoryChunk(reset = false) {
     const historyList = document.getElementById('historyList');
     if (!historyList) return;
+    if (isHistoryChunkLoading) return;
+    isHistoryChunkLoading = true;
 
-    if (reset) historyList.innerHTML = '';
+    if (reset) {
+        historyList.innerHTML = '';
+        if (window.InfiniteScroll) window.InfiniteScroll.detach('history');
+    }
     const start = historyRendered;
     const end = Math.min(historyRendered + HISTORY_PAGE_SIZE, historyItemsRaw.length);
-    if (start >= end) return;
+    if (start >= end) {
+        isHistoryChunkLoading = false;
+        if (window.InfiniteScroll) window.InfiniteScroll.detach('history');
+        return;
+    }
 
     const html = historyItemsRaw
         .slice(start, end)
@@ -188,7 +199,13 @@ function renderHistoryChunk(reset = false) {
 
     historyList.insertAdjacentHTML('beforeend', html);
     historyRendered = end;
-    renderLoadMoreButton('historyList', historyRendered < historyItemsRaw.length, () => renderHistoryChunk(false));
+    isHistoryChunkLoading = false;
+
+    if (historyRendered < historyItemsRaw.length && window.InfiniteScroll) {
+        window.InfiniteScroll.attach('history', historyList, () => renderHistoryChunk(false));
+    } else if (window.InfiniteScroll) {
+        window.InfiniteScroll.detach('history');
+    }
 }
 
 // View Toggle for Discover Section
@@ -455,11 +472,20 @@ async function loadLibrary() {
 function renderLibraryChunk(reset = false) {
     const libraryGrid = document.getElementById('libraryGrid');
     if (!libraryGrid) return;
-    if (reset) libraryGrid.innerHTML = '';
+    if (isLibraryChunkLoading) return;
+    isLibraryChunkLoading = true;
+    if (reset) {
+        libraryGrid.innerHTML = '';
+        if (window.InfiniteScroll) window.InfiniteScroll.detach('library');
+    }
 
     const start = libraryRendered;
     const end = Math.min(libraryRendered + LIBRARY_PAGE_SIZE, libraryData.length);
-    if (start >= end) return;
+    if (start >= end) {
+        isLibraryChunkLoading = false;
+        if (window.InfiniteScroll) window.InfiniteScroll.detach('library');
+        return;
+    }
 
     const html = libraryData
         .slice(start, end)
@@ -467,24 +493,13 @@ function renderLibraryChunk(reset = false) {
         .join('');
     libraryGrid.insertAdjacentHTML('beforeend', html);
     libraryRendered = end;
+    isLibraryChunkLoading = false;
 
-    renderLoadMoreButton('libraryGrid', libraryRendered < libraryData.length, () => renderLibraryChunk(false));
-}
-
-function renderLoadMoreButton(containerId, shouldShow, onClick) {
-    const container = document.getElementById(containerId);
-    if (!container) return;
-
-    const oldBtn = container.parentElement?.querySelector(`.load-more-btn[data-for="${containerId}"]`);
-    if (oldBtn) oldBtn.remove();
-    if (!shouldShow) return;
-
-    const btn = document.createElement('button');
-    btn.className = 'load-more-btn';
-    btn.dataset.for = containerId;
-    btn.textContent = 'Load more';
-    btn.addEventListener('click', onClick);
-    container.parentElement.appendChild(btn);
+    if (libraryRendered < libraryData.length && window.InfiniteScroll) {
+        window.InfiniteScroll.attach('library', libraryGrid, () => renderLibraryChunk(false));
+    } else if (window.InfiniteScroll) {
+        window.InfiniteScroll.detach('library');
+    }
 }
 
 function displayResults(tracks) {
@@ -492,7 +507,7 @@ function displayResults(tracks) {
     resultsData = tracks;
 
     if (tracks.length === 0) {
-        resultsGrid.innerHTML = '<p style="grid-column: 1/-1; text-align: center; color: var(--spotify-light-gray); padding: 48px;">No results found</p>';
+        resultsGrid.innerHTML = window.AppUI.emptyState('No results found');
         return;
     }
 
@@ -617,7 +632,7 @@ async function playFromYouTube(track) {
 function updatePlayerUI(track) {
     const playerTrackInfo = document.querySelector('.player-track-info');
     playerTrackInfo.querySelector('.track-image').innerHTML = track.image ?
-        `<img src="${track.image}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 4px;" />` :
+        `<img class="player-track-cover" src="${track.image}" alt="${track.name}" />` :
         `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" /></svg>`;
     playerTrackInfo.querySelector('.track-name').textContent = track.name;
     playerTrackInfo.querySelector('.track-artist').textContent = track.artist;
@@ -996,16 +1011,11 @@ async function startDownload() {
 }
 
 function showNotification(message, type = 'info') {
-    const container = document.getElementById('toastContainer') || document.body;
-    const notification = document.createElement('div');
-    notification.className = `toast ${type}`;
-    notification.textContent = message;
-    container.appendChild(notification);
-
-    setTimeout(() => {
-        notification.classList.add('leaving');
-        setTimeout(() => notification.remove(), 220);
-    }, 2500);
+    if (window.AppUI && typeof window.AppUI.showNotification === 'function') {
+        window.AppUI.showNotification(message, type);
+        return;
+    }
+    console.log(`[${type}] ${message}`);
 }
 
 document.getElementById('downloadModal').addEventListener('click', (e) => {

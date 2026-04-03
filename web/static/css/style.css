@@ -1099,23 +1099,82 @@ textarea.text-input {
     background: rgba(255, 255, 255, 0.1);
 }
 
-.load-more-btn {
-    margin: 14px auto 0;
-    display: block;
-    border: 1px solid var(--spotify-light-gray);
-    background: transparent;
-    color: var(--spotify-light-gray);
-    border-radius: 999px;
-    padding: 8px 16px;
-    cursor: pointer;
-    font-weight: 600;
-    transition: all var(--transition-fast);
+.history-item-skeleton { opacity: .9; }
+.history-thumb-skeleton {
+    width: 40px;
+    height: 40px;
+    aspect-ratio: 1;
+    margin-bottom: 0;
+}
+.history-main-col {
+    flex: 1;
+    min-width: 0;
+}
+.history-line-primary {
+    width: 75%;
+    height: 12px;
+    margin-bottom: 8px;
+}
+.history-line-secondary {
+    width: 55%;
+    height: 10px;
+    margin-bottom: 0;
+}
+.history-line-meta {
+    width: 60px;
+    height: 10px;
+    margin-bottom: 0;
+}
+.history-thumb {
+    width: 40px;
+    height: 40px;
+    aspect-ratio: 1;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.history-thumb-icon { opacity: .9; }
+.history-track-name {
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.history-track-artist {
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.history-meta-col { text-align: right; }
+.history-quality {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.7);
+}
+.history-date {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.55);
 }
 
-.load-more-btn:hover {
-    color: var(--spotify-white);
-    border-color: var(--spotify-white);
-    background: rgba(255, 255, 255, 0.08);
+.empty-state {
+    grid-column: 1 / -1;
+    text-align: center;
+    color: var(--spotify-light-gray);
+    padding: 48px 0;
+}
+
+.player-track-cover {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 4px;
+}
+
+.infinite-sentinel {
+    width: 100%;
+    height: 1px;
+    grid-column: 1 / -1;
 }
 
 /* Toast notifications */

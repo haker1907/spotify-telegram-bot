@@ -16,7 +16,8 @@ class SpotifyService:
     
     def __init__(self):
         self.session = requests.Session()
-        print("✅ Spotify сервис инициализирован (oEmbed)")
+        # Emoji в Windows-консоли (cp1251/cp866) может вызывать UnicodeEncodeError
+        print("Spotify сервис инициализирован (oEmbed)")
     
     @staticmethod
     def parse_spotify_url(url: str) -> Optional[Dict[str, str]]:

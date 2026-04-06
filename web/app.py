@@ -23,6 +23,15 @@ from database.db_manager import DatabaseManager
 
 app = Flask(__name__)
 logger = logging.getLogger("web.app")
+# Важно: часть логгеров (например, werkzeug) пишет записи вне request context.
+# Чтобы не падать с KeyError: 'request_id', добавляем поле по умолчанию на уровне LogRecordFactory.
+_old_factory = logging.getLogRecordFactory()
+def _record_factory(*args, **kwargs):
+    record = _old_factory(*args, **kwargs)
+    if not hasattr(record, "request_id"):
+        record.request_id = "-"
+    return record
+logging.setLogRecordFactory(_record_factory)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(name)s] [%(request_id)s] %(message)s")
 # CORS: ограничиваем доверенные origin
 allowed_origins_env = os.getenv("WEB_ALLOWED_ORIGINS", "").strip()
@@ -1482,5 +1491,5 @@ if __name__ == '__main__':
     
     # Запуск сервера
     port = int(os.environ.get('PORT', 5000))
-    print(f"🚀 Web App starting on port {port}...")
+    print(f"Web App starting on port {port}...")
     app.run(host='0.0.0.0', port=port, debug=False)

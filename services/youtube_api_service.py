@@ -14,9 +14,9 @@ class YouTubeAPIService:
         self.base_url = "https://www.googleapis.com/youtube/v3"
         
         if not self.api_key:
-            print("⚠️ YOUTUBE_API_KEY not set. YouTube search will use fallback method.")
+            print("YOUTUBE_API_KEY not set. YouTube search will use fallback method.")
         else:
-            print(f"✅ YouTube API initialized (key: {self.api_key[:10]}...)")
+            print(f"YouTube API initialized (key: {self.api_key[:10]}...)")
     
     def search_video(self, query: str, max_results: int = 1) -> Optional[Dict]:
         """
@@ -30,7 +30,7 @@ class YouTubeAPIService:
             Dict с информацией о видео или None
         """
         if not self.api_key:
-            print("❌ YouTube API key not configured")
+            print("YouTube API key not configured")
             return None
         
         try:
@@ -67,23 +67,23 @@ class YouTubeAPIService:
                         'published_at': snippet.get('publishedAt')
                     }
                 else:
-                    print(f"ℹ️ No results found for: {query}")
+                    print(f"No results found for: {query}")
                     return None
             elif response.status_code == 403:
                 error_data = response.json()
                 error_reason = error_data.get('error', {}).get('errors', [{}])[0].get('reason')
                 
                 if error_reason == 'quotaExceeded':
-                    print("❌ YouTube API quota exceeded. Try again tomorrow or increase quota.")
+                    print("YouTube API quota exceeded. Try again tomorrow or increase quota.")
                 else:
-                    print(f"❌ YouTube API error 403: {error_reason}")
+                    print(f"YouTube API error 403: {error_reason}")
                 return None
             else:
-                print(f"❌ YouTube API error: {response.status_code} - {response.text}")
+                print(f"YouTube API error: {response.status_code} - {response.text}")
                 return None
                 
         except Exception as e:
-            print(f"❌ Error searching YouTube API: {e}")
+            print(f"Error searching YouTube API: {e}")
             return None
     
     def get_video_details(self, video_id: str) -> Optional[Dict]:
@@ -135,11 +135,11 @@ class YouTubeAPIService:
                     }
                 return None
             else:
-                print(f"❌ YouTube API error: {response.status_code}")
+                print(f"YouTube API error: {response.status_code}")
                 return None
                 
         except Exception as e:
-            print(f"❌ Error getting video details: {e}")
+            print(f"Error getting video details: {e}")
             return None
     
     def check_quota(self) -> bool:

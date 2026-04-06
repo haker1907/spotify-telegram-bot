@@ -10,9 +10,13 @@ load_dotenv()
 # Telegram Bot
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 if not TELEGRAM_BOT_TOKEN:
-    print("⚠️  TELEGRAM_BOT_TOKEN не найден в переменных окружения!")
-    print("💡 Создайте .env файл или установите переменную окружения")
-    raise ValueError("❌ TELEGRAM_BOT_TOKEN обязателен для работы бота!")
+    # В Windows-консоли (cp1251/cp866) emoji может ломать запуск через UnicodeEncodeError.
+    # Держим сообщения ASCII/кириллица-без-emoji, чтобы веб/бот падали корректно с ValueError.
+    print("TELEGRAM_BOT_TOKEN не найден в переменных окружения!")
+    print("Создайте .env файл или установите переменную окружения TELEGRAM_BOT_TOKEN.")
+    # Не прерываем импорт `config` для веб-интерфейса: UI может работать без токена,
+    # но функционал, который требует Telegram API (авторизация, storage), будет недоступен.
+    TELEGRAM_BOT_TOKEN = None
 
 # База данных
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -103,5 +107,5 @@ HELP_MESSAGE = """
 Нужна помощь? Напишите /start
 """
 
-print(f"✅ Конфигурация загружена: {BOT_NAME} v{BOT_VERSION}")
-print("ℹ️  Бот работает БЕЗ Spotify API - автоматическое скачивание")
+print(f"Конфигурация загружена: {BOT_NAME} v{BOT_VERSION}")
+print("Бот работает без Spotify API - автоматическое скачивание")

@@ -31,7 +31,7 @@ class DownloadService:
             from services.youtube_api_service import YouTubeAPIService
             self.youtube_api = YouTubeAPIService()
         except Exception as e:
-            print(f"ℹ️ YouTube API not available: {e}")
+            print(f"YouTube API not available: {e}")
         
         # Проверяем переменную окружения для Railway деплоя
         cookies_env = os.getenv('YOUTUBE_COOKIES_BASE64')
@@ -42,7 +42,7 @@ class DownloadService:
                 cookies_env = cookies_env.strip().strip('"').strip("'")
                 cookies_env = cookies_env.replace('\n', '').replace('\r', '')
                 
-                print(f"📦 Attempting to restore cookies from YOUTUBE_COOKIES_BASE64...")
+                print("Attempting to restore cookies from YOUTUBE_COOKIES_BASE64...")
                 try:
                     cookies_content = base64.b64decode(cookies_env, validate=True).decode('utf-8')
                 except Exception:
@@ -54,31 +54,31 @@ class DownloadService:
                 is_netscape = cookies_content.startswith('# Netscape') or '# HTTP' in cookies_content[:100]
                 
                 if len(cookies_content) > 10:
-                    print(f"📊 Decoded size: {len(cookies_content)} bytes")
+                    print(f"Decoded size: {len(cookies_content)} bytes")
                     if not is_netscape:
-                        print(f"⚠️ WARNING: Cookies do NOT look like Netscape format! Download might fail.")
+                        print("WARNING: Cookies do NOT look like Netscape format! Download might fail.")
                     else:
-                        print(f"✅ Cookie format looks valid (Netscape)")
+                        print("Cookie format looks valid (Netscape)")
                 
                 with open(self.cookies_path, 'w', encoding='utf-8') as f:
                     f.write(cookies_content)
-                print(f"✅ YouTube cookies restored/updated to: {self.cookies_path}")
+                print(f"YouTube cookies restored/updated to: {self.cookies_path}")
             except Exception as e:
-                print(f"❌ Failed to restore cookies from environment: {e}")
+                print(f"Failed to restore cookies from environment: {e}")
         
         if os.path.exists(self.cookies_path):
-            print(f"🍪 YouTube cookie file found: {self.cookies_path}")
+            print(f"YouTube cookie file found: {self.cookies_path}")
         else:
             if not self.youtube_api or not self.youtube_api.api_key:
-                print(f"⚠️ YouTube cookie file NOT found at: {self.cookies_path}")
-                print(f"   Set YOUTUBE_API_KEY or YOUTUBE_COOKIES_BASE64 environment variable")
+                print(f"YouTube cookie file NOT found at: {self.cookies_path}")
+                print("Set YOUTUBE_API_KEY or YOUTUBE_COOKIES_BASE64 environment variable")
             else:
-                print(f"✅ Using YouTube API instead of cookies")
+                print("Using YouTube API instead of cookies")
 
         if self.cookies_browser and self.cookies_browser_available:
-            print(f"🦊 Browser cookies enabled: {self.cookies_browser}")
+            print(f"Browser cookies enabled: {self.cookies_browser}")
         elif self.cookies_browser:
-            print(f"⚠️ Browser cookies disabled: profile not found for '{self.cookies_browser}'")
+            print(f"Browser cookies disabled: profile not found for '{self.cookies_browser}'")
             print("   Using cookiefile/env cookies fallback.")
 
     def _is_browser_cookies_available(self, browser_value: str) -> bool:

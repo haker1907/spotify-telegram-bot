@@ -27,16 +27,16 @@ class DatabaseManager:
         db_dir = os.path.dirname(db_abs_path)
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
-            print(f"📁 Created database directory: {db_dir}", flush=True)
+            print(f"Created database directory: {db_dir}", flush=True)
 
         # Создадим файл БД если его еще нет (простой touch)
         if not os.path.exists(db_abs_path):
             try:
                 # Создаем пустой файл чтобы SQLite мог его открыть
                 open(db_abs_path, 'a').close()
-                print(f"📄 Created empty database file: {db_abs_path}", flush=True)
+                print(f"Created empty database file: {db_abs_path}", flush=True)
             except Exception as e:
-                print(f"⚠️  Could not pre-create database file: {e}", flush=True)
+                print(f"Could not pre-create database file: {e}", flush=True)
 
         # Добавляем таймаут для SQLite чтобы избежать "database is locked" в многопроцессной среде
         connect_args = {"timeout": 20} if "sqlite" in self.database_url else {}
@@ -46,7 +46,7 @@ class DatabaseManager:
             connect_args=connect_args
         )
 
-        print(f"🔍 [DB] Using database at: {db_abs_path} (Size: {os.path.getsize(db_abs_path) if os.path.exists(db_abs_path) else 'NOT FOUND'} bytes)", flush=True)
+        print(f"[DB] Using database at: {db_abs_path} (Size: {os.path.getsize(db_abs_path) if os.path.exists(db_abs_path) else 'NOT FOUND'} bytes)", flush=True)
         
         # Включаем Foreign Keys на уровне драйвера SQLite для КАЖДОГО соединения
         if "sqlite" in self.database_url:

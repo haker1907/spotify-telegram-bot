@@ -27,6 +27,7 @@ let currentCardPlayBtn = null;
 let pendingSeekSeconds = null;
 
 const PLAYBACK_STORAGE_KEY = 'playbackStateV1';
+const LAST_TRACK_STORAGE_KEY = 'lastPlayedTrackV1';
 let lastPlaybackSaveAt = 0;
 
 function updateQueueStatus() {
@@ -59,6 +60,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initializePlaylists();
     initializeViewToggle();
     loadLibrary();
+    restoreLastPlayedTrackUI();
 
     if (userData) {
         loadPlaylists();
@@ -79,6 +81,44 @@ document.addEventListener('DOMContentLoaded', () => {
         }).catch(err => console.log('Backup request failed:', err));
     });
 });
+
+function restoreLastPlayedTrackUI() {
+    // Восстанавливаем только UI (без автоплея), чтобы после refresh был виден последний трек
+    try {
+        const raw = localStorage.getItem(LAST_TRACK_STORAGE_KEY);
+        if (!raw) return;
+        const track = JSON.parse(raw);
+        if (!track || (!track.name && !track.artist)) return;
+
+        currentTrack = track;
+        updatePlayerUI(track);
+
+        // Подсветим правильную иконку на правой панели/плеере
+        setNowPlayingPlayButtonState(!audioPlayer.paused);
+        updatePlayButton(!audioPlayer.paused);
+    } catch (_) {
+        // ignore
+    }
+}
+
+function persistLastPlayedTrack(track) {
+    try {
+        if (!track) return;
+        // сохраняем только нужные поля, чтобы не раздувать storage
+        const minimal = {
+            id: track.id || '',
+            name: track.name || '',
+            artist: track.artist || '',
+            album: track.album || '',
+            image: track.image || '',
+            preview_url: track.preview_url || null,
+            from_discover: !!track.from_discover
+        };
+        localStorage.setItem(LAST_TRACK_STORAGE_KEY, JSON.stringify(minimal));
+    } catch (_) {
+        // ignore
+    }
+}
 
 function initializeHeaderNav() {
     const backBtn = document.getElementById('navBackBtn');
@@ -776,6 +816,7 @@ async function playTrack(button, trackData = null) {
 
     // Обновляем правую панель сразу при выборе трека
     updateNowPlayingPanel(track);
+    persistLastPlayedTrack(track);
 
     if (button && currentCardPlayBtn && currentCardPlayBtn !== button) {
         setCardPlayButtonState(currentCardPlayBtn, false);
@@ -787,6 +828,7 @@ async function playTrack(button, trackData = null) {
     // Сначала пробуем Spotify preview (30 секунд)
     if (track.preview_url) {
         currentTrack = track;
+        persistLastPlayedTrack(track);
         audioPlayer.src = track.preview_url;
         audioPlayer.play().catch(err => {
             console.error('Preview play error:', err);
@@ -838,6 +880,7 @@ async function playFromYouTube(track) {
 
         if (response.ok && data.stream_url) {
             currentTrack = track;
+            persistLastPlayedTrack(track);
             // Используем прямую ссылку из Telegram
             audioPlayer.src = data.stream_url;
             audioPlayer.play().catch(err => {

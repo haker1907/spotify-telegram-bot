@@ -93,6 +93,16 @@ function restoreLastPlayedTrackUI() {
         currentTrack = track;
         updatePlayerUI(track);
 
+        // Восстанавливаем сохранённую позицию (только UI), даже если duration пока неизвестна
+        try {
+            const pRaw = localStorage.getItem(PLAYBACK_STORAGE_KEY);
+            const state = pRaw ? JSON.parse(pRaw) : null;
+            if (state && state.trackId && state.trackId === track.id && typeof state.position === 'number' && state.position > 0) {
+                const currentTimeEl = document.getElementById('currentTime');
+                if (currentTimeEl) currentTimeEl.textContent = formatTime(state.position);
+            }
+        } catch (_) { }
+
         // Подсветим правильную иконку на правой панели/плеере
         setNowPlayingPlayButtonState(!audioPlayer.paused);
         updatePlayButton(!audioPlayer.paused);
@@ -151,7 +161,13 @@ function initializeNowPlayingPanel() {
             showNotification('Сначала выберите трек', 'info');
             return;
         }
+        // Если после refresh src пустой — нужно заново подготовить стрим (URL из Telegram может истечь).
+        const hasSrc = !!(audioPlayer.src && audioPlayer.src !== window.location.href);
         if (audioPlayer.paused) {
+            if (!hasSrc) {
+                playTrack(null, currentTrack);
+                return;
+            }
             audioPlayer.play().catch(() => showNotification('Не удалось воспроизвести', 'error'));
         } else {
             audioPlayer.pause();
@@ -940,7 +956,13 @@ function initializePlayer() {
 
     playBtn.addEventListener('click', () => {
         if (audioPlayer.paused) {
-            audioPlayer.play();
+            // Если src пустой (после refresh), стартуем текущий трек через prepare-stream
+            const hasSrc = !!(audioPlayer.src && audioPlayer.src !== window.location.href);
+            if (!hasSrc && currentTrack) {
+                playTrack(null, currentTrack);
+                return;
+            }
+            audioPlayer.play().catch(() => showNotification('Не удалось воспроизвести', 'error'));
             updatePlayButton(true);
         } else {
             audioPlayer.pause();
@@ -971,9 +993,20 @@ function initializePlayer() {
         }
     });
 
-    // Установка общей длительности
+    // Установка общей длительности + восстановление UI прогресса
     audioPlayer.addEventListener('loadedmetadata', () => {
         totalTimeEl.textContent = formatTime(audioPlayer.duration);
+        try {
+            const raw = localStorage.getItem(PLAYBACK_STORAGE_KEY);
+            const state = raw ? JSON.parse(raw) : null;
+            if (state && state.trackId && currentTrack?.id && state.trackId === currentTrack.id && typeof state.position === 'number') {
+                currentTimeEl.textContent = formatTime(state.position);
+                if (audioPlayer.duration && audioPlayer.duration > 0) {
+                    const progress = Math.min(100, Math.max(0, (state.position / audioPlayer.duration) * 100));
+                    progressSlider.value = progress;
+                }
+            }
+        } catch (_) { }
     });
 
     // Синхронизация иконок плеера/карточки с реальным состоянием аудио
@@ -984,12 +1017,40 @@ function initializePlayer() {
     audioPlayer.addEventListener('pause', () => {
         updatePlayButton(false);
         if (currentCardPlayBtn) setCardPlayButtonState(currentCardPlayBtn, false);
+
+        // Надёжно сохраняем позицию при паузе (на случай, если timeupdate не успел)
+        try {
+            const now = Date.now();
+            if (currentTrack?.id && Number.isFinite(audioPlayer.currentTime)) {
+                localStorage.setItem(PLAYBACK_STORAGE_KEY, JSON.stringify({
+                    trackId: currentTrack.id,
+                    position: audioPlayer.currentTime,
+                    updatedAt: now
+                }));
+                lastPlaybackSaveAt = now;
+            }
+        } catch (_) { }
     });
 
     // Перемотка
     progressSlider.addEventListener('input', (e) => {
         const time = (e.target.value / 100) * audioPlayer.duration;
         audioPlayer.currentTime = time;
+    });
+
+    // После перемотки тоже фиксируем позицию
+    audioPlayer.addEventListener('seeked', () => {
+        try {
+            const now = Date.now();
+            if (currentTrack?.id && Number.isFinite(audioPlayer.currentTime)) {
+                localStorage.setItem(PLAYBACK_STORAGE_KEY, JSON.stringify({
+                    trackId: currentTrack.id,
+                    position: audioPlayer.currentTime,
+                    updatedAt: now
+                }));
+                lastPlaybackSaveAt = now;
+            }
+        } catch (_) { }
     });
 
     audioPlayer.addEventListener('ended', () => {

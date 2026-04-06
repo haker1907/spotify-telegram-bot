@@ -871,6 +871,7 @@ class DatabaseManager:
                     'artist': tg_file.artist or (track.artist if track else "Unknown Artist"),
                     'album': track.album if track else None,
                     'image': tg_file.image_url or (track.image_url if track else None),
+                    'preview_url': track.preview_url if track else None,
                     'spotify_url': track.spotify_url if track else f"https://open.spotify.com/track/{tg_file.track_id}",
                     'uploaded_at': tg_file.uploaded_at
                 })

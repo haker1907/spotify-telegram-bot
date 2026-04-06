@@ -58,6 +58,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initializePlayer();
     initializeNowPlayingPanel();
     initializePlaylists();
+    initializeUploadTrack();
     initializeViewToggle();
     loadLibrary();
     restoreLastPlayedTrackUI();
@@ -1184,6 +1185,70 @@ function initializePlaylists() {
     document.getElementById('addToPlaylistModal').addEventListener('click', (e) => {
         if (e.target.id === 'addToPlaylistModal') closeAddToPlaylistModal();
     });
+}
+
+function initializeUploadTrack() {
+    const btn = document.getElementById('uploadMusicBtn');
+    btn?.addEventListener('click', () => {
+        if (!userData) {
+            showNotification('Please login first', 'info');
+            return;
+        }
+        document.getElementById('uploadTrackModal')?.classList.add('active');
+    });
+
+    document.getElementById('uploadTrackModal')?.addEventListener('click', (e) => {
+        if (e.target.id === 'uploadTrackModal') closeUploadTrackModal();
+    });
+}
+
+function closeUploadTrackModal() {
+    document.getElementById('uploadTrackModal')?.classList.remove('active');
+}
+
+async function uploadTrack() {
+    if (!userData) {
+        showNotification('Please login first', 'info');
+        return;
+    }
+    const fileInput = document.getElementById('uploadTrackFile');
+    const nameInput = document.getElementById('uploadTrackName');
+    const artistInput = document.getElementById('uploadTrackArtist');
+    const file = fileInput?.files?.[0];
+    if (!file) {
+        showNotification('Choose audio file first', 'error');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('name', (nameInput?.value || '').trim());
+    formData.append('artist', (artistInput?.value || '').trim());
+
+    try {
+        showNotification('Uploading track...', 'info');
+        const response = await fetch('/api/upload-track', {
+            method: 'POST',
+            credentials: 'same-origin',
+            body: formData
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            showNotification(data.error || 'Upload failed', 'error');
+            return;
+        }
+
+        showNotification('Track uploaded to library', 'success');
+        closeUploadTrackModal();
+        if (fileInput) fileInput.value = '';
+        if (nameInput) nameInput.value = '';
+        if (artistInput) artistInput.value = '';
+
+        await loadLibrary();
+    } catch (error) {
+        console.error('Upload track error:', error);
+        showNotification('Upload failed', 'error');
+    }
 }
 
 async function loadPlaylists() {

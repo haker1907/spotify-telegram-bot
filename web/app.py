@@ -5,6 +5,7 @@ import threading
 import os
 import sys
 import functools
+import hashlib
 from datetime import datetime, timedelta
 import jwt
 import time
@@ -12,6 +13,7 @@ from collections import defaultdict
 import requests
 import uuid
 import logging
+from werkzeug.utils import secure_filename
 
 # Добавляем корневую директорию в путь для импорта модулей
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -691,6 +693,133 @@ def get_library():
         
     except Exception as e:
         print(f"❌ Error in get_library: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/upload-track', methods=['POST'])
+@require_auth
+def upload_track():
+    """Загрузка локального аудиофайла пользователя в библиотеку web."""
+    try:
+        user_id = getattr(g, 'current_user_id', None)
+        if not user_id:
+            return jsonify({'error': 'Unauthorized'}), 401
+
+        if 'file' not in request.files:
+            return jsonify({'error': 'Audio file is required'}), 400
+
+        uploaded = request.files['file']
+        if not uploaded or not uploaded.filename:
+            return jsonify({'error': 'Audio file is required'}), 400
+
+        filename = secure_filename(uploaded.filename)
+        if not filename:
+            return jsonify({'error': 'Invalid filename'}), 400
+
+        allowed_ext = {'.mp3', '.m4a', '.aac', '.wav', '.flac', '.ogg', '.opus'}
+        _, ext = os.path.splitext(filename.lower())
+        if ext not in allowed_ext:
+            return jsonify({'error': f'Unsupported format: {ext or "unknown"}'}), 400
+
+        # Размер файла ограничиваем 60MB для стабильности на web.
+        uploaded.stream.seek(0, os.SEEK_END)
+        file_size = uploaded.stream.tell()
+        uploaded.stream.seek(0)
+        if file_size > 60 * 1024 * 1024:
+            return jsonify({'error': 'File is too large (max 60MB)'}), 400
+
+        # Сохраняем в uploads/ с поддиректорией пользователя
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        user_upload_dir = os.path.join(base_dir, 'uploads', str(user_id))
+        os.makedirs(user_upload_dir, exist_ok=True)
+
+        unique_name = f"{uuid.uuid4().hex}{ext}"
+        file_path = os.path.join(user_upload_dir, unique_name)
+        uploaded.save(file_path)
+
+        # Метаданные: из формы или из имени файла "Artist - Track"
+        artist = (request.form.get('artist') or '').strip()
+        track_name = (request.form.get('name') or '').strip()
+        if not track_name:
+            stem = os.path.splitext(filename)[0]
+            if ' - ' in stem:
+                parts = stem.split(' - ', 1)
+                if not artist:
+                    artist = parts[0].strip()
+                track_name = parts[1].strip()
+            else:
+                track_name = stem.strip()
+        if not artist:
+            artist = 'Local Upload'
+
+        raw_id = f"{user_id}:{artist}:{track_name}:{file_size}:{os.path.basename(file_path)}"
+        track_id = f"upload_{hashlib.md5(raw_id.encode()).hexdigest()[:16]}"
+        preview_url = f"/api/stream-local/{track_id}"
+
+        track_data = {
+            'id': track_id,
+            'name': track_name,
+            'artist': artist,
+            'album': None,
+            'duration_ms': None,
+            'preview_url': preview_url,
+            'spotify_url': f"local://upload/{track_id}",
+            'image_url': None,
+            'popularity': None
+        }
+
+        # Сохраняем трек и файл в БД
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(db.get_or_create_track(track_data))
+        # file_id делаем локальным псевдо-ID для совместимости
+        loop.run_until_complete(db.save_telegram_file(
+            track_id=track_id,
+            file_id=f"local:{track_id}",
+            file_path=file_path,
+            file_size=file_size,
+            artist=artist,
+            track_name=track_name
+        ))
+        loop.close()
+
+        return jsonify({
+            'success': True,
+            'track': {
+                'id': track_id,
+                'name': track_name,
+                'artist': artist,
+                'image': None,
+                'preview_url': preview_url,
+                'from_discover': True,
+                'uploaded_at': datetime.utcnow().isoformat()
+            }
+        })
+    except Exception as e:
+        print(f"Upload track error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/stream-local/<track_id>', methods=['GET'])
+@require_auth
+def stream_local_track(track_id: str):
+    """Стрим локально загруженного трека по track_id."""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        tg_file = loop.run_until_complete(db.get_telegram_file(track_id))
+        loop.close()
+
+        if not tg_file:
+            return jsonify({'error': 'Track not found'}), 404
+
+        local_path = tg_file.telegram_file_path
+        if not local_path or not os.path.exists(local_path):
+            return jsonify({'error': 'File not found on disk'}), 404
+
+        return send_file(local_path, as_attachment=False, conditional=True)
+    except Exception as e:
+        print(f"Stream local error: {e}")
         return jsonify({'error': str(e)}), 500
 
 def search_by_url(url):

@@ -215,6 +215,23 @@ body {
     flex: 1 1 auto;
 }
 
+.upload-btn {
+    background: rgba(255, 255, 255, 0.12);
+    color: var(--spotify-white);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    padding: 10px 16px;
+    border-radius: 999px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.upload-btn:hover {
+    background: rgba(255, 255, 255, 0.18);
+    border-color: rgba(255, 255, 255, 0.28);
+    transform: translateY(-1px);
+}
+
 .search-icon {
     position: absolute;
     left: 12px;

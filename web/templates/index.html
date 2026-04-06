@@ -50,6 +50,25 @@
     <main class="main-content">
         <!-- Header -->
         <header class="header">
+            <div class="header-left">
+                <div class="header-nav">
+                    <button class="nav-circle-btn" id="navBackBtn" title="Back" aria-label="Back">
+                        <svg viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
+                        </svg>
+                    </button>
+                    <button class="nav-circle-btn" id="navForwardBtn" title="Forward" aria-label="Forward">
+                        <svg viewBox="0 0 24 24" fill="currentColor">
+                            <path d="m8.59 16.59 1.41 1.41 6-6-6-6-1.41 1.41L13.17 12z" />
+                        </svg>
+                    </button>
+                    <button class="nav-circle-btn" id="navHomeBtn" title="Home" aria-label="Home">
+                        <svg viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
             <div class="search-bar">
                 <svg class="search-icon" viewBox="0 0 24 24" fill="currentColor">
                     <path
@@ -139,6 +158,42 @@
             </div>
         </div>
     </main>
+
+    <!-- Now Playing Panel (Right Sidebar) -->
+    <aside class="now-playing">
+        <div class="now-playing-header">
+            <div class="now-playing-title">Сейчас играет</div>
+        </div>
+        <div class="now-playing-card" id="nowPlayingCard">
+            <div class="np-cover" id="npCover">
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+                </svg>
+            </div>
+            <div class="np-meta">
+                <div class="np-name" id="npName">Выберите трек</div>
+                <div class="np-artist" id="npArtist">—</div>
+            </div>
+            <div class="np-actions">
+                <button class="np-btn" id="npPlayBtn" title="Play/Pause" aria-label="Play/Pause">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M8 5v14l11-7z" />
+                    </svg>
+                </button>
+                <button class="np-btn secondary" id="npDownloadBtn" title="Download" aria-label="Download">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2z" />
+                    </svg>
+                </button>
+            </div>
+        </div>
+        <div class="now-playing-section">
+            <div class="np-section-title">О треке</div>
+            <div class="np-section-body" id="npAbout">
+                Здесь будут детали выбранного трека и быстрые действия.
+            </div>
+        </div>
+    </aside>
 
     <!-- Player Bar -->
     <div class="player-bar">

@@ -52,8 +52,10 @@ document.addEventListener('DOMContentLoaded', () => {
     checkAuthToken();
     updateUserUI();
     initializeNavigation();
+    initializeHeaderNav();
     initializeSearch();
     initializePlayer();
+    initializeNowPlayingPanel();
     initializePlaylists();
     initializeViewToggle();
     loadLibrary();
@@ -77,6 +79,90 @@ document.addEventListener('DOMContentLoaded', () => {
         }).catch(err => console.log('Backup request failed:', err));
     });
 });
+
+function initializeHeaderNav() {
+    const backBtn = document.getElementById('navBackBtn');
+    const fwdBtn = document.getElementById('navForwardBtn');
+    const homeBtn = document.getElementById('navHomeBtn');
+
+    backBtn?.addEventListener('click', () => window.history.back());
+    fwdBtn?.addEventListener('click', () => window.history.forward());
+    homeBtn?.addEventListener('click', () => {
+        // Переключаемся на Search
+        document.querySelectorAll('.content-section').forEach(s => s.classList.remove('active'));
+        document.getElementById('searchResults')?.classList.add('active');
+        document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
+        document.querySelector('[data-page="search"]')?.classList.add('active');
+        // Сброс поля поиска (не трогаем Discover)
+        const searchInput = document.getElementById('searchInput');
+        if (searchInput) searchInput.value = '';
+        const resultsGrid = document.getElementById('resultsGrid');
+        if (resultsGrid) resultsGrid.innerHTML = '';
+        lastSearchQuery = '';
+    });
+}
+
+function initializeNowPlayingPanel() {
+    const npPlayBtn = document.getElementById('npPlayBtn');
+    const npDownloadBtn = document.getElementById('npDownloadBtn');
+
+    npPlayBtn?.addEventListener('click', () => {
+        if (!currentTrack) {
+            showNotification('Сначала выберите трек', 'info');
+            return;
+        }
+        if (audioPlayer.paused) {
+            audioPlayer.play().catch(() => showNotification('Не удалось воспроизвести', 'error'));
+        } else {
+            audioPlayer.pause();
+        }
+    });
+
+    npDownloadBtn?.addEventListener('click', () => {
+        if (!currentTrack) {
+            showNotification('Сначала выберите трек', 'info');
+            return;
+        }
+        document.getElementById('downloadModal')?.classList.add('active');
+    });
+
+    // синхронизируем иконку Play/Pause с реальным плеером
+    audioPlayer.addEventListener('play', () => setNowPlayingPlayButtonState(true));
+    audioPlayer.addEventListener('pause', () => setNowPlayingPlayButtonState(false));
+}
+
+function setNowPlayingPlayButtonState(isPlaying) {
+    const btn = document.getElementById('npPlayBtn');
+    if (!btn) return;
+    btn.innerHTML = isPlaying
+        ? `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg>`
+        : `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>`;
+}
+
+function updateNowPlayingPanel(track) {
+    const cover = document.getElementById('npCover');
+    const name = document.getElementById('npName');
+    const artist = document.getElementById('npArtist');
+    const about = document.getElementById('npAbout');
+
+    if (!cover || !name || !artist || !about) return;
+    if (!track) return;
+
+    cover.innerHTML = track.image
+        ? `<img src="${track.image}" alt="" loading="lazy" decoding="async" />`
+        : `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" /></svg>`;
+
+    name.textContent = track.name || 'Трек';
+    artist.textContent = track.artist || '—';
+
+    const source = track.from_discover ? 'Discover' : 'Spotify/поиск';
+    about.innerHTML = `
+        <div style="display:grid; gap:6px;">
+            <div><span style="opacity:.75;">Источник:</span> <span style="font-weight:800;">${source}</span></div>
+            ${track.album ? `<div><span style="opacity:.75;">Альбом:</span> <span style="font-weight:800;">${track.album}</span></div>` : ''}
+        </div>
+    `;
+}
 
 function renderTrackSkeletons(count = 8) {
     const items = [];
@@ -688,6 +774,9 @@ async function playTrack(button, trackData = null) {
 
     if (!track) return;
 
+    // Обновляем правую панель сразу при выборе трека
+    updateNowPlayingPanel(track);
+
     if (button && currentCardPlayBtn && currentCardPlayBtn !== button) {
         setCardPlayButtonState(currentCardPlayBtn, false);
     }
@@ -795,6 +884,8 @@ function updatePlayerUI(track) {
         `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" /></svg>`;
     playerTrackInfo.querySelector('.track-name').textContent = track.name;
     playerTrackInfo.querySelector('.track-artist').textContent = track.artist;
+
+    updateNowPlayingPanel(track);
 }
 
 function initializePlayer() {

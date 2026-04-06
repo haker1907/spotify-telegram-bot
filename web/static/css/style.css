@@ -37,7 +37,7 @@ body {
     overflow: hidden;
     height: 100vh;
     display: grid;
-    grid-template-columns: 240px 1fr;
+    grid-template-columns: 240px 1fr 360px;
     grid-template-rows: 1fr 90px;
     gap: 8px;
     padding: 8px;
@@ -164,11 +164,55 @@ body {
     background: rgba(18, 18, 18, 0.8);
     backdrop-filter: blur(20px);
     z-index: 100;
+    gap: 16px;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 0 0 auto;
+}
+
+.header-nav {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.nav-circle-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    background: rgba(0, 0, 0, 0.35);
+    color: rgba(255, 255, 255, 0.88);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.nav-circle-btn:hover {
+    background: rgba(255, 255, 255, 0.10);
+    border-color: rgba(255, 255, 255, 0.18);
+    transform: scale(1.05);
+}
+
+.nav-circle-btn:active {
+    transform: scale(0.98);
+}
+
+.nav-circle-btn svg {
+    width: 18px;
+    height: 18px;
 }
 
 .search-bar {
     position: relative;
-    width: 360px;
+    width: min(520px, 55vw);
+    flex: 1 1 auto;
 }
 
 .search-icon {
@@ -287,6 +331,136 @@ body {
     grid-template-columns: 1fr 2fr 1fr;
     align-items: center;
     gap: 24px;
+}
+
+/* Right panel: Now playing */
+.now-playing {
+    background: var(--spotify-dark);
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.now-playing-header {
+    padding: 16px 18px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(18, 18, 18, 0.65);
+    backdrop-filter: blur(16px);
+}
+
+.now-playing-title {
+    font-weight: 800;
+    letter-spacing: 0.2px;
+}
+
+.now-playing-card {
+    padding: 18px;
+    display: grid;
+    gap: 12px;
+}
+
+.np-cover {
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.06);
+    overflow: hidden;
+    box-shadow: var(--shadow-lg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.np-cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.np-cover svg {
+    width: 72px;
+    height: 72px;
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.np-meta {
+    min-width: 0;
+}
+
+.np-name {
+    font-size: 18px;
+    font-weight: 900;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.np-artist {
+    margin-top: 4px;
+    color: rgba(255, 255, 255, 0.72);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.np-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.np-btn {
+    flex: 1;
+    height: 44px;
+    border-radius: 10px;
+    border: none;
+    background: var(--spotify-green);
+    color: white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform var(--transition-fast), filter var(--transition-fast), background var(--transition-fast);
+}
+
+.np-btn:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.05);
+}
+
+.np-btn.secondary {
+    background: rgba(255, 255, 255, 0.10);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.np-btn svg {
+    width: 18px;
+    height: 18px;
+}
+
+.now-playing-section {
+    padding: 0 18px 18px;
+}
+
+.np-section-title {
+    margin-top: 6px;
+    font-size: 13px;
+    font-weight: 800;
+    color: rgba(255, 255, 255, 0.75);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+}
+
+.np-section-body {
+    margin-top: 10px;
+    padding: 12px 12px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.78);
+    line-height: 1.35;
 }
 
 .player-track-info {
@@ -1279,6 +1453,10 @@ textarea.text-input {
 
     .player-volume {
         justify-content: center;
+    }
+
+    .now-playing {
+        display: none;
     }
 }
 

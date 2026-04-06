@@ -100,6 +100,17 @@ function restoreLastPlayedTrackUI() {
             if (state && state.trackId && state.trackId === track.id && typeof state.position === 'number' && state.position > 0) {
                 const currentTimeEl = document.getElementById('currentTime');
                 if (currentTimeEl) currentTimeEl.textContent = formatTime(state.position);
+
+                // Если есть сохранённая длительность — выставим totalTime и положение ползунка корректно
+                const totalTimeEl = document.getElementById('totalTime');
+                const progressSlider = document.getElementById('progressSlider');
+                if (typeof state.duration === 'number' && state.duration > 0) {
+                    if (totalTimeEl) totalTimeEl.textContent = formatTime(state.duration);
+                    if (progressSlider) {
+                        const pct = Math.min(100, Math.max(0, (state.position / state.duration) * 100));
+                        progressSlider.value = pct;
+                    }
+                }
             }
         } catch (_) { }
 
@@ -987,6 +998,7 @@ function initializePlayer() {
                 localStorage.setItem(PLAYBACK_STORAGE_KEY, JSON.stringify({
                     trackId: currentTrack.id,
                     position: audioPlayer.currentTime,
+                    duration: audioPlayer.duration,
                     updatedAt: now
                 }));
             } catch (_) {}
@@ -1025,6 +1037,7 @@ function initializePlayer() {
                 localStorage.setItem(PLAYBACK_STORAGE_KEY, JSON.stringify({
                     trackId: currentTrack.id,
                     position: audioPlayer.currentTime,
+                    duration: Number.isFinite(audioPlayer.duration) ? audioPlayer.duration : 0,
                     updatedAt: now
                 }));
                 lastPlaybackSaveAt = now;

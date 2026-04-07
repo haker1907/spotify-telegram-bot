@@ -1121,17 +1121,39 @@ body {
 .spotify-playlist-card {
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    width: 220px;
+    gap: 12px;
+    width: 100%;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 14px;
+    padding: 14px;
+    text-align: left;
+    align-items: stretch;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+    transition: transform var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.spotify-playlist-card:hover {
+    background: rgba(255, 255, 255, 0.085);
+    border-color: rgba(255, 255, 255, 0.14);
+    transform: translateY(-2px);
+    box-shadow: 0 14px 38px rgba(0, 0, 0, 0.42);
+}
+
+.playlist-card.spotify-playlist-card {
+    /* override generic .playlist-card styles (centered layout) */
+    align-items: stretch;
+    text-align: left;
+    padding: 14px;
 }
 
 .spotify-playlist-card .playlist-cover {
     width: 100%;
     aspect-ratio: 1;
-    border-radius: 8px;
+    border-radius: 12px;
     overflow: hidden;
     background: #333;
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow-lg);
 }
 
 .spotify-playlist-card .playlist-cover img {
@@ -1141,20 +1163,29 @@ body {
     display: block;
 }
 
+.spotify-playlist-card .playlist-cover img {
+    transform: scale(1.01);
+}
+
 .spotify-playlist-card .playlist-meta {
     display: flex;
     flex-direction: column;
     gap: 2px;
+    min-width: 0;
 }
 
 .spotify-playlist-card .playlist-name {
-    font-weight: 700;
-    font-size: 15px;
+    font-weight: 900;
+    font-size: 18px;
+    letter-spacing: 0.1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .spotify-playlist-card .playlist-caption {
-    font-size: 12px;
-    color: var(--spotify-light-gray);
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.70);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1167,14 +1198,10 @@ body {
     margin-top: 4px;
 }
 
-.playlist-actions-row .action-btn {
-    height: 40px;
-}
-
 .playlist-play-btn {
     flex: 1;
-    height: 40px;
-    border-radius: 999px;
+    height: 44px;
+    border-radius: 10px;
     background: var(--spotify-green);
     border: none;
     color: #000;
@@ -1182,21 +1209,23 @@ body {
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: transform var(--transition-fast), filter var(--transition-fast);
+    box-shadow: 0 8px 18px rgba(29, 185, 84, 0.28);
+    transition: transform var(--transition-fast), filter var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .playlist-play-btn:hover {
     transform: translateY(-1px);
     filter: brightness(1.05);
+    box-shadow: 0 12px 26px rgba(29, 185, 84, 0.34);
 }
 
 .playlist-icon-btn {
-    width: 36px;
-    height: 36px;
-    border-radius: 8px;
-    border: none;
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--spotify-white);
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(0, 0, 0, 0.18);
+    color: rgba(255, 255, 255, 0.92);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1205,8 +1234,14 @@ body {
 }
 
 .playlist-icon-btn:hover {
-    background: rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.10);
     transform: translateY(-1px);
+}
+
+.playlist-play-btn svg,
+.playlist-icon-btn svg {
+    width: 18px;
+    height: 18px;
 }
 
 /* Modals */
@@ -1675,4 +1710,22 @@ textarea.text-input {
 .player-controls .play-btn svg {
     width: 28px;
     height: 28px;
+}
+
+/* Final overrides: Spotify playlist cards should not inherit generic playlist-card layout */
+.playlist-card.spotify-playlist-card {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 14px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+    transform: none;
+    align-items: stretch;
+    text-align: left;
+}
+
+.playlist-card.spotify-playlist-card:hover {
+    background: rgba(255, 255, 255, 0.085);
+    border-color: rgba(255, 255, 255, 0.14);
+    transform: translateY(-2px);
+    box-shadow: 0 14px 38px rgba(0, 0, 0, 0.42);
 }

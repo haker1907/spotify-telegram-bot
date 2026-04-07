@@ -127,6 +127,9 @@ class DatabaseManager:
                         if cols and "total_tracks" not in cols:
                             print("⚙️ [DB] Adding missing column user_spotify_playlists.total_tracks...")
                             sync_conn.exec_driver_sql("ALTER TABLE user_spotify_playlists ADD COLUMN total_tracks INTEGER")
+                        if cols and "image_url" not in cols:
+                            print("⚙️ [DB] Adding missing column user_spotify_playlists.image_url...")
+                            sync_conn.exec_driver_sql("ALTER TABLE user_spotify_playlists ADD COLUMN image_url VARCHAR(500)")
                     except Exception as e:
                         print(f"⚠️ [DB] Could not ensure user_spotify_playlists columns: {e}")
 
@@ -142,6 +145,9 @@ class DatabaseManager:
                         if cols and "cached_at" not in cols:
                             print("⚙️ [DB] Adding missing column public_spotify_playlists.cached_at...")
                             sync_conn.exec_driver_sql("ALTER TABLE public_spotify_playlists ADD COLUMN cached_at DATETIME")
+                        if cols and "image_url" not in cols:
+                            print("⚙️ [DB] Adding missing column public_spotify_playlists.image_url...")
+                            sync_conn.exec_driver_sql("ALTER TABLE public_spotify_playlists ADD COLUMN image_url VARCHAR(500)")
                     except Exception as e:
                         print(f"⚠️ [DB] Could not ensure public_spotify_playlists columns: {e}")
 
@@ -448,6 +454,7 @@ class DatabaseManager:
         spotify_id: str,
         name: str,
         owner: Optional[str] = None,
+        image_url: Optional[str] = None,
         spotify_url: Optional[str] = None,
         total_tracks: Optional[int] = None,
         added_by_user_id: Optional[int] = None,
@@ -466,6 +473,7 @@ class DatabaseManager:
                     spotify_id=spotify_id,
                     name=name or "Playlist",
                     owner=owner,
+                    image_url=image_url,
                     spotify_url=spotify_url or f"https://open.spotify.com/playlist/{spotify_id}",
                     total_tracks=total_tracks,
                     added_by_user_id=added_by_user_id,
@@ -477,6 +485,8 @@ class DatabaseManager:
             else:
                 pl.name = name or pl.name
                 pl.owner = owner
+                if image_url is not None:
+                    pl.image_url = image_url
                 pl.spotify_url = spotify_url or pl.spotify_url
                 pl.total_tracks = total_tracks
                 if added_by_user_id:
@@ -537,6 +547,7 @@ class DatabaseManager:
         spotify_id: str,
         name: str,
         owner: Optional[str] = None,
+        image_url: Optional[str] = None,
         spotify_url: Optional[str] = None,
         total_tracks: Optional[int] = None,
     ) -> UserSpotifyPlaylist:
@@ -562,6 +573,7 @@ class DatabaseManager:
                     spotify_id=spotify_id,
                     name=name or "Playlist",
                     owner=owner,
+                    image_url=image_url,
                     spotify_url=spotify_url or f"https://open.spotify.com/playlist/{spotify_id}",
                     total_tracks=total_tracks,
                 )
@@ -569,6 +581,8 @@ class DatabaseManager:
             else:
                 row.name = name or row.name
                 row.owner = owner
+                if image_url is not None:
+                    row.image_url = image_url
                 row.spotify_url = spotify_url or row.spotify_url
                 row.total_tracks = total_tracks if total_tracks is not None else row.total_tracks
             await session.commit()

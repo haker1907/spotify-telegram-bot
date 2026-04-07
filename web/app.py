@@ -9,7 +9,7 @@ import hashlib
 from datetime import datetime, timedelta
 import jwt
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 import requests
 import uuid
 import logging
@@ -225,6 +225,8 @@ _async_runtime_loop = None
 _async_runtime_thread = None
 playlist_cache_jobs = {}
 playlist_cache_jobs_lock = threading.Lock()
+source_failure_events = deque()
+source_failure_lock = threading.Lock()
 
 
 class RequestIdFilter(logging.Filter):
@@ -272,6 +274,27 @@ def _set_playlist_cache_job(job_id: str, **fields):
 def _get_playlist_cache_job(job_id: str):
     with playlist_cache_jobs_lock:
         return dict(playlist_cache_jobs.get(job_id) or {})
+
+
+def _record_source_failure(reason: str = ""):
+    now = time.time()
+    with source_failure_lock:
+        source_failure_events.append((now, reason[:200]))
+        cutoff = now - 3600
+        while source_failure_events and source_failure_events[0][0] < cutoff:
+            source_failure_events.popleft()
+
+
+def _source_failure_stats():
+    now = time.time()
+    with source_failure_lock:
+        last_5m = sum(1 for ts, _ in source_failure_events if ts >= now - 300)
+        last_60m = len(source_failure_events)
+    return {
+        "last_5m": last_5m,
+        "last_60m": last_60m,
+        "warn": last_5m >= 3 or last_60m >= 15
+    }
 
 def get_telegram_storage():
     """Ленивая инициализация Telegram Storage Service"""
@@ -587,6 +610,17 @@ def admin_cache_public_playlist():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/admin/api/source-health', methods=['GET'])
+@require_auth
+@require_admin
+def admin_source_health():
+    """Админ: частота ошибок источника скачивания (для диагностики cookies/yt-dlp)."""
+    try:
+        return jsonify({'success': True, 'source_failures': _source_failure_stats()})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/favicon.ico')
 def favicon():
     # Чтобы не было 404 в консоли браузера: иконка не критична для работы приложения.
@@ -798,6 +832,7 @@ def get_public_playlists():
                 'spotify_id': getattr(p, 'spotify_id', None),
                 'name': getattr(p, 'name', ''),
                 'owner': getattr(p, 'owner', ''),
+                'image': getattr(p, 'image_url', None),
                 'spotify_url': getattr(p, 'spotify_url', ''),
                 'total_tracks': getattr(p, 'total_tracks', None),
                 'is_cached_public': bool(getattr(p, 'is_cached_public', 0)),
@@ -828,6 +863,7 @@ def get_spotify_playlist_tracks(spotify_id: str):
                 spotify_id=spotify_id,
                 name=info.get('name') or 'Playlist',
                 owner=info.get('owner', ''),
+                image_url=info.get('image'),
                 spotify_url=url,
                 total_tracks=len(info.get('tracks') or []),
                 added_by_user_id=getattr(g, 'current_user_id', None)
@@ -1083,6 +1119,7 @@ def search_by_url(url):
                             spotify_id=playlist_id,
                             name=info.get('name') or 'Playlist',
                             owner=info.get('owner', ''),
+                            image_url=info.get('image'),
                             spotify_url=f"https://open.spotify.com/playlist/{playlist_id}",
                             total_tracks=len(info.get('tracks') or []),
                             added_by_user_id=getattr(g, 'current_user_id', None)
@@ -1436,6 +1473,7 @@ def my_spotify_playlists():
                     'spotify_id': p.spotify_id,
                     'name': p.name,
                     'owner': p.owner,
+                    'image': getattr(p, 'image_url', None),
                     'spotify_url': p.spotify_url,
                     'total_tracks': p.total_tracks,
                 })
@@ -1447,6 +1485,7 @@ def my_spotify_playlists():
         owner = (data.get('owner') or '').strip() or None
         spotify_url = (data.get('spotify_url') or '').strip() or None
         total_tracks = data.get('total_tracks')
+        image_url = (data.get('image_url') or data.get('image') or '').strip() or None
 
         if not spotify_id:
             return jsonify({'error': 'spotify_id is required'}), 400
@@ -1456,6 +1495,7 @@ def my_spotify_playlists():
             spotify_id=spotify_id,
             name=name,
             owner=owner,
+            image_url=image_url,
             spotify_url=spotify_url,
             total_tracks=total_tracks,
         ))
@@ -1465,6 +1505,7 @@ def my_spotify_playlists():
                 'spotify_id': pl.spotify_id,
                 'name': pl.name,
                 'owner': pl.owner,
+                'image': getattr(pl, 'image_url', None),
                 'spotify_url': pl.spotify_url,
                 'total_tracks': pl.total_tracks,
             }
@@ -1786,6 +1827,7 @@ def ensure_track_cached(loop, track_id: str, artist: str, track_name: str, image
                 )
             )
     if not result or result.get('error'):
+        _record_source_failure(result.get('error') if result else 'unknown download error')
         return {'success': False, 'error': result.get('error') if result else 'Unknown download error'}
     if not result.get('file_path') or not os.path.exists(result['file_path']):
         return {'success': False, 'error': 'File not found after download'}
@@ -1878,6 +1920,7 @@ def _run_playlist_cache_job(job_id: str, user_id: int, spotify_id: str, requeste
         all_tracks = info.get('tracks') or []
         playlist_name = info.get('name') or 'Playlist'
         playlist_owner = info.get('owner') or ''
+        playlist_image = info.get('image')
         total_tracks = len(all_tracks)
 
         # Resume должен идти с первого реально отсутствующего трека, а не по "кол-ву успехов".
@@ -1891,6 +1934,7 @@ def _run_playlist_cache_job(job_id: str, user_id: int, spotify_id: str, requeste
             spotify_id=spotify_id,
             name=playlist_name,
             owner=playlist_owner,
+            image_url=playlist_image,
             spotify_url=url,
             total_tracks=total_tracks,
         ))
@@ -1898,6 +1942,7 @@ def _run_playlist_cache_job(job_id: str, user_id: int, spotify_id: str, requeste
             spotify_id=spotify_id,
             name=playlist_name,
             owner=playlist_owner,
+            image_url=playlist_image,
             spotify_url=url,
             total_tracks=total_tracks,
             added_by_user_id=user_id,
@@ -1964,6 +2009,7 @@ def _run_playlist_cache_job(job_id: str, user_id: int, spotify_id: str, requeste
             spotify_id=spotify_id,
             name=playlist_name,
             owner=playlist_owner,
+            image_url=playlist_image,
             spotify_url=url,
             total_tracks=total_tracks,
             added_by_user_id=user_id,
@@ -2072,6 +2118,7 @@ def cache_spotify_playlist(spotify_id: str):
         tracks = all_tracks[start_from:end_index]
         playlist_name = info.get('name') or 'Playlist'
         playlist_owner = info.get('owner') or ''
+        playlist_image = info.get('image')
 
         # Сохраняем плейлист у пользователя
         loop.run_until_complete(db.save_user_spotify_playlist(
@@ -2079,6 +2126,7 @@ def cache_spotify_playlist(spotify_id: str):
             spotify_id=spotify_id,
             name=playlist_name,
             owner=playlist_owner,
+            image_url=playlist_image,
             spotify_url=url,
             total_tracks=len(info.get('tracks') or []),
         ))
@@ -2087,6 +2135,7 @@ def cache_spotify_playlist(spotify_id: str):
             spotify_id=spotify_id,
             name=playlist_name,
             owner=playlist_owner,
+            image_url=playlist_image,
             spotify_url=url,
             total_tracks=len(info.get('tracks') or []),
             added_by_user_id=user_id,
@@ -2135,6 +2184,7 @@ def cache_spotify_playlist(spotify_id: str):
             spotify_id=spotify_id,
             name=playlist_name,
             owner=playlist_owner,
+            image_url=playlist_image,
             spotify_url=url,
             total_tracks=len(info.get('tracks') or []),
             added_by_user_id=user_id,

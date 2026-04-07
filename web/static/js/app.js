@@ -937,7 +937,7 @@ function renderSpotifyPlaylistCard(pl) {
     const name = pl.name || 'Playlist';
     const owner = pl.owner || '';
     const total = typeof pl.total_tracks === 'number' ? pl.total_tracks : null;
-    const img = pl.image || '';
+    const img = pl.image || pl.image_url || pl.cover_url || '';
     const caption = owner ? `${owner}${total != null ? ` • ${total} tracks` : ''}` : (total != null ? `${total} tracks` : '');
 
     return `
@@ -957,7 +957,7 @@ function renderSpotifyPlaylistCard(pl) {
                 <button class="playlist-icon-btn" onclick="event.stopPropagation(); playlistDownload('${id}', '${escapeQuotes(name)}')">
                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2z"/></svg>
                 </button>
-                ${userData ? `<button class="playlist-icon-btn" title="Save to my playlists" onclick="event.stopPropagation(); playlistSaveToMy('${id}', '${escapeQuotes(name)}', '${escapeQuotes(owner)}', '${escapeQuotes(pl.spotify_url || '')}', ${total != null ? total : 'null'})">
+                ${userData ? `<button class="playlist-icon-btn" title="Save to my playlists" onclick="event.stopPropagation(); playlistSaveToMy('${id}', '${escapeQuotes(name)}', '${escapeQuotes(owner)}', '${escapeQuotes(pl.spotify_url || '')}', ${total != null ? total : 'null'}, '${escapeQuotes(img)}')">
                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
                 </button>
                 <button class="playlist-icon-btn" title="Save to channel for everyone" onclick="event.stopPropagation(); playlistSaveToChannelPublic('${id}', '${escapeQuotes(name)}')">
@@ -1006,7 +1006,7 @@ async function playlistPlay(spotifyId, name) {
     }
 }
 
-async function playlistSaveToMy(spotifyId, name, owner = '', spotifyUrl = '', totalTracks = null) {
+async function playlistSaveToMy(spotifyId, name, owner = '', spotifyUrl = '', totalTracks = null, imageUrl = '') {
     if (!userData) {
         showNotification('Please login first', 'info');
         return;
@@ -1022,7 +1022,8 @@ async function playlistSaveToMy(spotifyId, name, owner = '', spotifyUrl = '', to
                 name,
                 owner: owner || undefined,
                 spotify_url: spotifyUrl || undefined,
-                total_tracks: Number.isFinite(totalTracks) ? totalTracks : undefined
+                total_tracks: Number.isFinite(totalTracks) ? totalTracks : undefined,
+                image_url: imageUrl || undefined
             })
         });
         updateGlobalLoading('Finalizing...', 90);

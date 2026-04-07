@@ -270,11 +270,17 @@
 
                 const tracksData = await apiGet('/api/library?limit=500');
                 const playlistsData = await apiGet('/admin/api/playlists/public?limit=200');
+                const healthData = await apiGet('/admin/api/source-health');
 
                 renderTracks(tracksData.tracks || []);
                 renderPlaylists(playlistsData.playlists || []);
+                const sf = (healthData && healthData.source_failures) || {};
+                if (sf.warn) {
+                    showMsg(`Warning: source failures are high (5m: ${sf.last_5m || 0}, 60m: ${sf.last_60m || 0}). Cookies or source availability may be degraded.`);
+                } else {
+                    showMsg(`Source health OK (5m: ${sf.last_5m || 0}, 60m: ${sf.last_60m || 0})`);
+                }
 
-                showMsg('');
             } catch (e) {
                 console.error(e);
                 showMsg(e.message || 'Admin load failed');

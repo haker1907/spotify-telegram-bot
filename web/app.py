@@ -543,7 +543,7 @@ def sync_deep():
 
 @app.route('/api/search', methods=['POST'])
 def search():
-    """Поиск треков (БД + Spotify)"""
+    """Поиск треков (БД + Spotify) или плейлиста по Spotify ссылке."""
     try:
         data = request.json
         query = data.get('query', '')
@@ -695,6 +695,79 @@ def get_library():
     except Exception as e:
         print(f"❌ Error in get_library: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/public-playlists', methods=['GET'])
+def get_public_playlists():
+    """Глобальные Spotify-плейлисты (для всех пользователей, web)."""
+    try:
+        limit = int(request.args.get('limit', 30))
+        limit = max(1, min(limit, 100))
+        items = run_async(db.get_public_spotify_playlists(limit=limit))
+        playlists = []
+        for p in items:
+            playlists.append({
+                'spotify_id': getattr(p, 'spotify_id', None),
+                'name': getattr(p, 'name', ''),
+                'owner': getattr(p, 'owner', ''),
+                'spotify_url': getattr(p, 'spotify_url', ''),
+                'total_tracks': getattr(p, 'total_tracks', None),
+            })
+        return jsonify({'playlists': playlists})
+    except Exception as e:
+        print(f"❌ Error in get_public_playlists: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/spotify-playlists/<string:spotify_id>/tracks', methods=['GET'])
+def get_spotify_playlist_tracks(spotify_id: str):
+    """Получить все треки Spotify-плейлиста по ID (для веб-страницы плейлиста)."""
+    try:
+        url = f"https://open.spotify.com/playlist/{spotify_id}"
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        info = loop.run_until_complete(spotify_service.get_playlist_info(url))
+        loop.close()
+
+        if not info or not info.get('tracks'):
+            return jsonify({'error': 'Playlist not found or empty', 'tracks': []}), 404
+
+        # Обновляем/сохраняем в глобальный список
+        try:
+            run_async(db.save_public_spotify_playlist(
+                spotify_id=spotify_id,
+                name=info.get('name') or 'Playlist',
+                owner=info.get('owner', ''),
+                spotify_url=url,
+                total_tracks=len(info.get('tracks') or []),
+                added_by_user_id=getattr(g, 'current_user_id', None)
+            ))
+        except Exception as save_e:
+            print(f"⚠️ Failed to refresh public playlist meta: {save_e}")
+
+        tracks_out = []
+        for t in info['tracks']:
+            tracks_out.append({
+                'id': t.get('id'),
+                'name': t.get('name'),
+                'artist': t.get('artist'),
+                'album': t.get('album'),
+                'duration': (t.get('duration_ms') or 0) // 1000 if t.get('duration_ms') else t.get('duration', 0),
+                'image': t.get('image'),
+                'preview_url': None,
+            })
+
+        return jsonify({
+            'tracks': tracks_out,
+            'name': info.get('name'),
+            'owner': info.get('owner', ''),
+            'total_tracks': len(tracks_out),
+        })
+    except Exception as e:
+        print(f"❌ Error in get_spotify_playlist_tracks: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e), 'tracks': []}), 500
 
 
 @app.route('/api/upload-track', methods=['POST'])
@@ -875,13 +948,18 @@ def local_cover_image(track_id: str):
 
 
 def search_by_url(url):
-    """Поиск по Spotify URL"""
+    """Поиск по Spotify URL.
+
+    Для плейлиста:
+    - сначала возвращаем только информацию о плейлисте (playlists), без треков,
+      чтобы фронтенд показывал карточку плейлиста первой;
+    - сами треки запрашиваются отдельным вызовом /api/spotify-playlists/<id>/tracks.
+    """
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
         info = None
-        collection_name = None
         
         # Определяем тип URL (track, album, playlist, artist)
         if '/track/' in url:
@@ -903,6 +981,38 @@ def search_by_url(url):
         
         elif '/playlist/' in url:
             info = loop.run_until_complete(spotify_service.get_playlist_info(url))
+            parsed = spotify_service.parse_spotify_url(url)
+            playlist_id = parsed.get("id") if parsed else None
+            loop.close()
+
+            if info:
+                # Сохраняем в глобальный каталог публичных плейлистов
+                try:
+                    if playlist_id:
+                        run_async(db.save_public_spotify_playlist(
+                            spotify_id=playlist_id,
+                            name=info.get('name') or 'Playlist',
+                            owner=info.get('owner', ''),
+                            spotify_url=f"https://open.spotify.com/playlist/{playlist_id}",
+                            total_tracks=len(info.get('tracks') or []),
+                            added_by_user_id=getattr(g, 'current_user_id', None)
+                        ))
+                except Exception as save_e:
+                    print(f"⚠️ Failed to save public playlist: {save_e}")
+
+                # Возвращаем только плейлист, без списка треков
+                image = info.get('image')
+                return jsonify({
+                    'playlists': [{
+                        'id': playlist_id,
+                        'name': info.get('name'),
+                        'owner': info.get('owner', ''),
+                        'image': image,
+                        'total_tracks': len(info.get('tracks') or []),
+                        'type': 'playlist'
+                    }],
+                    'tracks': []
+                })
         elif '/album/' in url:
             info = loop.run_until_complete(spotify_service.get_album_info(url))
         elif '/artist/' in url:
@@ -911,7 +1021,7 @@ def search_by_url(url):
         loop.close()
         
         if info and info.get('tracks'):
-            # Формируем треки
+            # Для album/artist оставляем старое поведение — сразу треки коллекции.
             tracks = []
             for track in info['tracks']:
                 tracks.append({

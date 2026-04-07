@@ -1,6 +1,7 @@
 // Music Downloader - Spotify Style Web App
 
 let currentTrack = null;
+let currentPlaylistMeta = null; // метаданные открытого Spotify-плейлиста (web)
 let searchTimeout = null;
 let searchController = null;
 let lastSearchQuery = '';
@@ -657,7 +658,11 @@ async function searchTracks(query) {
         // Serve fresh cached results immediately
         const cached = searchCache.get(normalizedQuery);
         if (cached && (Date.now() - cached.ts) < 30000) {
-            displayResults(cached.tracks || []);
+            if (cached.playlists && cached.playlists.length > 0) {
+                displayPlaylistSearchResults(cached.playlists, normalizedQuery);
+            } else {
+                displayResults(cached.tracks || []);
+            }
             return;
         }
 
@@ -678,8 +683,14 @@ async function searchTracks(query) {
 
         const data = await response.json();
         const tracks = data.tracks || [];
-        searchCache.set(normalizedQuery, { ts: Date.now(), tracks });
-        displayResults(tracks);
+        const playlists = data.playlists || [];
+        searchCache.set(normalizedQuery, { ts: Date.now(), tracks, playlists });
+
+        if (playlists.length > 0) {
+            displayPlaylistSearchResults(playlists, normalizedQuery);
+        } else {
+            displayResults(tracks);
+        }
     } catch (error) {
         if (error?.name === 'AbortError') return;
         console.error('Search error:', error);
@@ -779,6 +790,7 @@ function renderLibraryChunk(reset = false) {
 function displayResults(tracks) {
     const resultsGrid = document.getElementById('resultsGrid');
     resultsData = tracks;
+    currentPlaylistMeta = null;
 
     if (tracks.length === 0) {
         resultsGrid.innerHTML = window.AppUI.emptyState('No results found');
@@ -786,6 +798,63 @@ function displayResults(tracks) {
     }
 
     resultsGrid.innerHTML = tracks.map((track, index) => renderTrackCard(track, index, 'search')).join('');
+}
+
+function displayPlaylistSearchResults(playlists, query) {
+    const resultsGrid = document.getElementById('resultsGrid');
+    resultsData = [];
+    currentPlaylistMeta = null;
+
+    if (!playlists || playlists.length === 0) {
+        resultsGrid.innerHTML = window.AppUI.emptyState('No playlists found');
+        return;
+    }
+
+    const safeQuery = escapeHtml(query);
+    const header = `
+        <div class="playlist-results-header">
+            <h2>Spotify playlists for "${safeQuery}"</h2>
+            <p>Выберите плейлист, чтобы открыть страницу со всеми треками.</p>
+        </div>
+    `;
+
+    const cards = playlists.map(pl => renderSpotifyPlaylistCard(pl)).join('');
+    resultsGrid.innerHTML = header + `<div class="playlists-grid search-playlists-grid">${cards}</div>`;
+}
+
+function renderSpotifyPlaylistCard(pl) {
+    const id = pl.spotify_id || pl.id;
+    const name = pl.name || 'Playlist';
+    const owner = pl.owner || '';
+    const total = typeof pl.total_tracks === 'number' ? pl.total_tracks : null;
+    const img = pl.image || '';
+    const caption = owner ? `${owner}${total != null ? ` • ${total} tracks` : ''}` : (total != null ? `${total} tracks` : '');
+
+    return `
+        <div class="playlist-card spotify-playlist-card" onclick="openSpotifyPlaylist('${id}', '${escapeQuotes(name)}')">
+            <div class="playlist-cover">
+                ${img ? `<img loading="lazy" decoding="async" src="${img}" alt="${escapeHtml(name)}" />`
+            : `<div class="playlist-placeholder-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 19h2V6H5v2h4v11zm4-11v11h2v-4h4v-2h-4V8h4V6h-4c-1.1 0-2 .9-2 2z"/></svg></div>`}
+            </div>
+            <div class="playlist-meta">
+                <div class="playlist-name" title="${escapeHtml(name)}">${escapeHtml(name)}</div>
+                <div class="playlist-caption" title="${escapeHtml(caption)}">${escapeHtml(caption)}</div>
+            </div>
+        </div>
+    `;
+}
+
+function escapeHtml(str) {
+    return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function escapeQuotes(str) {
+    return String(str || '').replace(/'/g, "\\'");
 }
 
 function renderTrackCard(track, index, type = 'search') {
@@ -1261,13 +1330,24 @@ async function loadPlaylists() {
     if (!userData) return;
     try {
         const grid = document.getElementById('playlistsGrid');
+        const publicGrid = document.getElementById('publicPlaylistsGrid');
         if (grid) grid.innerHTML = renderPlaylistsSkeletons(6);
+        if (publicGrid) publicGrid.innerHTML = renderPlaylistsSkeletons(4);
 
         const response = await fetch('/api/playlists', {
             credentials: 'same-origin'
         });
         const data = await response.json();
         displayPlaylists(data.playlists || []);
+
+        // Публичные Spotify-плейлисты (общие для всех)
+        try {
+            const resp2 = await fetch('/api/public-playlists');
+            const data2 = await resp2.json();
+            displayPublicPlaylists(data2.playlists || []);
+        } catch (e) {
+            console.warn('Load public playlists error:', e);
+        }
     } catch (error) {
         console.error('Load playlists error:', error);
     }
@@ -1289,6 +1369,50 @@ function displayPlaylists(playlists) {
             <div class="playlist-count">${pl.track_count} tracks</div>
         </div>
     `).join('');
+}
+
+function displayPublicPlaylists(playlists) {
+    const grid = document.getElementById('publicPlaylistsGrid');
+    if (!grid) return;
+    if (!playlists || playlists.length === 0) {
+        grid.innerHTML = '<p style="grid-column: 1/-1; text-align: center; color: var(--spotify-light-gray); padding: 32px 0;">No public playlists yet.</p>';
+        return;
+    }
+    grid.innerHTML = playlists.map(pl => renderSpotifyPlaylistCard(pl)).join('');
+}
+
+async function openSpotifyPlaylist(spotifyId, name) {
+    try {
+        const response = await fetch(`/api/spotify-playlists/${spotifyId}/tracks`);
+        const data = await response.json();
+        if (!response.ok) {
+            showNotification(data.error || 'Failed to load playlist', 'error');
+            return;
+        }
+
+        currentPlaylistMeta = {
+            id: spotifyId,
+            name: name,
+            total: data.total_tracks || (data.tracks ? data.tracks.length : 0),
+            owner: data.owner || '',
+        };
+
+        document.querySelectorAll('.content-section').forEach(s => s.classList.remove('active'));
+        document.getElementById('searchResults').classList.add('active');
+        document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
+        document.querySelector('[data-page="search"]').classList.add('active');
+
+        displayResults(data.tracks || []);
+
+        const searchInput = document.getElementById('searchInput');
+        if (searchInput) {
+            searchInput.value = `Playlist: ${name}`;
+        }
+        showNotification(`Showing ${data.tracks.length || 0} tracks from playlist`, 'success');
+    } catch (err) {
+        console.error('openSpotifyPlaylist error:', err);
+        showNotification('Failed to load playlist tracks', 'error');
+    }
 }
 
 async function viewPlaylist(playlistId, playlistName) {

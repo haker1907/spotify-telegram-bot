@@ -736,6 +736,46 @@ function hideGlobalLoading() {
     overlay.classList.remove('active');
 }
 
+function xhrRequest(url, { method = 'GET', headers = {}, body = null, responseType = 'json', onUploadProgress = null, onDownloadProgress = null } = {}) {
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open(method, url, true);
+        xhr.withCredentials = true;
+        xhr.responseType = responseType;
+
+        Object.entries(headers || {}).forEach(([k, v]) => xhr.setRequestHeader(k, v));
+
+        if (typeof onUploadProgress === 'function' && xhr.upload) {
+            xhr.upload.onprogress = (evt) => {
+                if (evt.lengthComputable) onUploadProgress(evt.loaded, evt.total);
+            };
+        }
+        if (typeof onDownloadProgress === 'function') {
+            xhr.onprogress = (evt) => {
+                if (evt.lengthComputable) onDownloadProgress(evt.loaded, evt.total);
+            };
+        }
+
+        xhr.onload = () => {
+            let data = xhr.response;
+            if (responseType === 'json' && (data === null || data === undefined)) {
+                try {
+                    data = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+                } catch (_) {
+                    data = null;
+                }
+            }
+            resolve({
+                ok: xhr.status >= 200 && xhr.status < 300,
+                status: xhr.status,
+                data
+            });
+        };
+        xhr.onerror = () => reject(new Error('Network error'));
+        xhr.send(body);
+    });
+}
+
 async function syncLibrary() {
     const btn = document.getElementById('syncLibraryBtn');
     if (!btn) return;
@@ -901,7 +941,7 @@ function renderSpotifyPlaylistCard(pl) {
     const caption = owner ? `${owner}${total != null ? ` • ${total} tracks` : ''}` : (total != null ? `${total} tracks` : '');
 
     return `
-        <div class="playlist-card spotify-playlist-card">
+        <div class="playlist-card spotify-playlist-card" role="button" tabindex="0" onclick="openSpotifyPlaylist('${id}', '${escapeQuotes(name)}')" onkeydown="if(event.key==='Enter' || event.key===' '){ event.preventDefault(); openSpotifyPlaylist('${id}', '${escapeQuotes(name)}'); }">
             <div class="playlist-cover">
                 ${img ? `<img loading="lazy" decoding="async" src="${img}" alt="${escapeHtml(name)}" />`
             : `<div class="playlist-placeholder-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 19h2V6H5v2h4v11zm4-11v11h2v-4h4v-2h-4V8h4V6h-4c-1.1 0-2 .9-2 2z"/></svg></div>`}
@@ -911,13 +951,13 @@ function renderSpotifyPlaylistCard(pl) {
                 <div class="playlist-caption" title="${escapeHtml(caption)}">${escapeHtml(caption)}</div>
             </div>
             <div class="playlist-actions-row">
-                <button class="playlist-play-btn" onclick="playlistPlay('${id}', '${escapeQuotes(name)}')">
+                <button class="playlist-play-btn" onclick="event.stopPropagation(); playlistPlay('${id}', '${escapeQuotes(name)}')">
                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
                 </button>
-                <button class="playlist-icon-btn" onclick="playlistDownload('${id}', '${escapeQuotes(name)}')">
+                <button class="playlist-icon-btn" onclick="event.stopPropagation(); playlistDownload('${id}', '${escapeQuotes(name)}')">
                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2z"/></svg>
                 </button>
-                ${userData ? `<button class="playlist-icon-btn" onclick="playlistAddToMy('${id}', '${escapeQuotes(name)}')">
+                ${userData ? `<button class="playlist-icon-btn" onclick="event.stopPropagation(); playlistAddToMy('${id}', '${escapeQuotes(name)}')">
                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
                 </button>` : ''}
             </div>
@@ -1029,26 +1069,32 @@ async function playlistDownload(spotifyId, name) {
         // Последовательная загрузка каждого трека, как в startDownload
         for (let i = 0; i < tracks.length; i++) {
             const t = tracks[i];
-            const progress = ((i + 1) / tracks.length) * 100;
-            updateGlobalLoading(`Downloading ${i + 1}/${tracks.length}: ${t.artist} - ${t.name}`, progress);
+            const base = (i / tracks.length) * 100;
+            updateGlobalLoading(`Downloading ${i + 1}/${tracks.length}: ${t.artist} - ${t.name}`, base);
             showNotification(`Downloading ${i + 1}/${tracks.length}: ${t.artist} — ${t.name}`, 'info');
             try {
-                const response = await fetch('/api/download', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'same-origin',
-                    body: JSON.stringify({
+                const payload = JSON.stringify({
                         track_id: t.id || '',
                         track_name: t.name,
                         track_artist: t.artist,
                         quality: '320',
                         format: 'mp3'
-                    })
+                    });
+                const response = await xhrRequest('/api/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: payload,
+                    responseType: 'blob',
+                    onDownloadProgress: (loaded, total) => {
+                        const withinTrack = total > 0 ? (loaded / total) : 0;
+                        const globalPct = base + (withinTrack * (100 / tracks.length));
+                        updateGlobalLoading(`Downloading ${i + 1}/${tracks.length}: ${t.artist} - ${t.name}`, globalPct);
+                    }
                 });
                 if (!response.ok) {
                     continue;
                 }
-                const blob = await response.blob();
+                const blob = response.data;
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
@@ -1514,15 +1560,19 @@ async function uploadTrack() {
     }
 
     try {
-        setGlobalLoading('Uploading track to channel...', 15);
+        setGlobalLoading('Uploading track to channel...', 0);
         showNotification('Uploading track...', 'info');
-        const response = await fetch('/api/upload-track', {
+        const response = await xhrRequest('/api/upload-track', {
             method: 'POST',
-            credentials: 'same-origin',
-            body: formData
+            body: formData,
+            responseType: 'json',
+            onUploadProgress: (loaded, total) => {
+                const pct = total > 0 ? (loaded / total) * 85 : 0;
+                updateGlobalLoading('Uploading track to channel...', pct);
+            }
         });
-        updateGlobalLoading('Saving uploaded track...', 80);
-        const data = await response.json();
+        updateGlobalLoading('Saving uploaded track...', 92);
+        const data = response.data || {};
         if (!response.ok || !data.success) {
             showNotification(data.error || 'Upload failed', 'error');
             return;
@@ -1824,26 +1874,28 @@ async function startDownload() {
     const quality = document.getElementById('qualitySelect').value;
 
     try {
-        setGlobalLoading('Downloading track...', 25);
+        setGlobalLoading('Downloading track...', 0);
         showNotification('Starting download...', 'info');
-        const response = await fetch('/api/download', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            credentials: 'same-origin',
-            body: JSON.stringify({
+        const payload = JSON.stringify({
                 track_id: currentTrack.id || '',
                 track_name: currentTrack.name,
                 track_artist: currentTrack.artist,
                 quality: quality,
                 format: format
-            })
+            });
+        const response = await xhrRequest('/api/download', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payload,
+            responseType: 'blob',
+            onDownloadProgress: (loaded, total) => {
+                const pct = total > 0 ? (loaded / total) * 95 : 0;
+                updateGlobalLoading('Downloading track...', pct);
+            }
         });
-        updateGlobalLoading('Preparing file...', 78);
 
         if (response.ok) {
-            const blob = await response.blob();
+            const blob = response.data;
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;

@@ -961,7 +961,7 @@ function renderSpotifyPlaylistCard(pl) {
                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
                 </button>
                 <button class="playlist-icon-btn" title="Save to channel for everyone" onclick="event.stopPropagation(); playlistSaveToChannelPublic('${id}', '${escapeQuotes(name)}')">
-                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14a1 1 0 0 0 1-1v-3h-2v2H6v-2H4v3a1 1 0 0 0 1 1zm7-3 5-6h-3V4h-4v7H7l5 6z"/></svg>
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2z"/></svg>
                 </button>` : ''}
             </div>
         </div>

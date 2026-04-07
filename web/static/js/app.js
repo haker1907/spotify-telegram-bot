@@ -26,6 +26,7 @@ let currentPlaylist = [];
 let currentTrackIndex = -1;
 let currentCardPlayBtn = null;
 let pendingSeekSeconds = null;
+let isRestoringHistoryState = false;
 
 const PLAYBACK_STORAGE_KEY = 'playbackStateV1';
 const LAST_TRACK_STORAGE_KEY = 'lastPlayedTrackV1';
@@ -49,6 +50,83 @@ function updateQueueStatus() {
     el.textContent = `${mode} | Prev: ${prev?.name || '-'} | Now: ${current?.name || '-'} | Next: ${next?.name || '-'}`;
 }
 
+function setActiveSection(sectionId) {
+    const sectionMap = {
+        search: 'searchResults',
+        playlists: 'playlists',
+        history: 'history',
+        spotifyPlaylist: 'spotifyPlaylistPage'
+    };
+    const resolvedSection = sectionMap[sectionId] || sectionId || 'searchResults';
+
+    document.querySelectorAll('.content-section').forEach(s => s.classList.remove('active'));
+    document.getElementById(resolvedSection)?.classList.add('active');
+
+    document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
+    const navPage = (resolvedSection === 'searchResults' || resolvedSection === 'spotifyPlaylistPage')
+        ? 'search'
+        : resolvedSection;
+    document.querySelector(`[data-page="${navPage}"]`)?.classList.add('active');
+}
+
+function buildCurrentHistoryState() {
+    const activeSection = document.querySelector('.content-section.active')?.id || 'searchResults';
+    const state = { section: activeSection };
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput?.value) state.searchInput = searchInput.value;
+    if (activeSection === 'spotifyPlaylistPage' && currentPlaylistMeta?.id) {
+        state.mode = 'spotifyPlaylist';
+        state.spotifyPlaylistId = currentPlaylistMeta.id;
+        state.spotifyPlaylistName = currentPlaylistMeta.name || '';
+    }
+    return state;
+}
+
+function pushHistoryState(state) {
+    if (isRestoringHistoryState) return;
+    window.history.pushState(state, '', window.location.pathname);
+}
+
+function replaceHistoryState(state) {
+    window.history.replaceState(state, '', window.location.pathname);
+}
+
+async function restoreFromHistoryState(state) {
+    const fallbackState = state || { section: 'searchResults' };
+    const section = fallbackState.section || 'searchResults';
+    isRestoringHistoryState = true;
+    try {
+        if (fallbackState.mode === 'spotifyPlaylist' && fallbackState.spotifyPlaylistId) {
+            await openSpotifyPlaylist(
+                fallbackState.spotifyPlaylistId,
+                fallbackState.spotifyPlaylistName || 'Playlist',
+                '',
+                { skipHistory: true }
+            );
+            return;
+        }
+        if ((fallbackState.mode === 'trackSearch' || fallbackState.mode === 'playlistSearch') && fallbackState.searchInput) {
+            const searchInput = document.getElementById('searchInput');
+            if (searchInput) searchInput.value = fallbackState.searchInput;
+            setActiveSection('searchResults');
+            await searchTracks(fallbackState.searchInput);
+            return;
+        }
+        if (fallbackState.mode === 'localPlaylist' && fallbackState.localPlaylistId && fallbackState.localPlaylistName && userData) {
+            await viewPlaylist(fallbackState.localPlaylistId, fallbackState.localPlaylistName, { skipHistory: true });
+            return;
+        }
+
+        setActiveSection(section);
+        const searchInput = document.getElementById('searchInput');
+        if (searchInput && typeof fallbackState.searchInput === 'string') {
+            searchInput.value = fallbackState.searchInput;
+        }
+    } finally {
+        isRestoringHistoryState = false;
+    }
+}
+
 // Initialize app
 document.addEventListener('DOMContentLoaded', async () => {
     await checkAuthToken();
@@ -69,6 +147,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (userData) {
         loadPlaylists();
     }
+
+    replaceHistoryState(buildCurrentHistoryState());
+    window.addEventListener('popstate', (event) => {
+        restoreFromHistoryState(event.state);
+    });
 
     // Backup БД при закрытии/обновлении страницы
     // endpoint теперь требует авторизацию, поэтому используем fetch с keepalive.
@@ -154,16 +237,14 @@ function initializeHeaderNav() {
     fwdBtn?.addEventListener('click', () => window.history.forward());
     homeBtn?.addEventListener('click', () => {
         // Переключаемся на Search
-        document.querySelectorAll('.content-section').forEach(s => s.classList.remove('active'));
-        document.getElementById('searchResults')?.classList.add('active');
-        document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
-        document.querySelector('[data-page="search"]')?.classList.add('active');
+        setActiveSection('searchResults');
         // Сброс поля поиска (не трогаем Discover)
         const searchInput = document.getElementById('searchInput');
         if (searchInput) searchInput.value = '';
         const resultsGrid = document.getElementById('resultsGrid');
         if (resultsGrid) resultsGrid.innerHTML = '';
         lastSearchQuery = '';
+        pushHistoryState({ section: 'searchResults', mode: 'home' });
     });
 }
 
@@ -604,12 +685,9 @@ function initializeNavigation() {
         item.addEventListener('click', (e) => {
             e.preventDefault();
             const page = item.dataset.page;
-
-            navItems.forEach(nav => nav.classList.remove('active'));
-            item.classList.add('active');
-
-            sections.forEach(section => section.classList.remove('active'));
-            document.getElementById(page === 'search' ? 'searchResults' : page).classList.add('active');
+            const targetSection = page === 'search' ? 'searchResults' : page;
+            setActiveSection(targetSection);
+            pushHistoryState({ section: targetSection });
 
             if (page === 'playlists' && userData) {
                 loadPlaylists();
@@ -690,8 +768,18 @@ async function searchTracks(query) {
 
         if (playlists.length > 0) {
             displayPlaylistSearchResults(playlists, normalizedQuery);
+            pushHistoryState({
+                section: 'searchResults',
+                mode: 'playlistSearch',
+                searchInput: normalizedQuery
+            });
         } else {
             displayResults(tracks);
+            pushHistoryState({
+                section: 'searchResults',
+                mode: 'trackSearch',
+                searchInput: normalizedQuery
+            });
         }
     } catch (error) {
         if (error?.name === 'AbortError') return;
@@ -1772,7 +1860,8 @@ function displayMySpotifyPlaylists(playlists) {
     grid.innerHTML = playlists.map(pl => renderSpotifyPlaylistCard(pl)).join('');
 }
 
-async function openSpotifyPlaylist(spotifyId, name, coverImage = '') {
+async function openSpotifyPlaylist(spotifyId, name, coverImage = '', options = {}) {
+    const { skipHistory = false } = options;
     try {
         const response = await fetch(`/api/spotify-playlists/${spotifyId}/tracks`);
         const data = await response.json();
@@ -1808,10 +1897,7 @@ async function openSpotifyPlaylist(spotifyId, name, coverImage = '') {
                 : `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9 19h2V6H5v2h4v11zm4-11v11h2v-4h4v-2h-4V8h4V6h-4c-1.1 0-2 .9-2 2z"/></svg>`;
         }
 
-        document.querySelectorAll('.content-section').forEach(s => s.classList.remove('active'));
-        page?.classList.add('active');
-        document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
-        document.querySelector('[data-page="search"]').classList.add('active');
+        setActiveSection(page?.id || 'spotifyPlaylistPage');
 
         resultsData = data.tracks || [];
         if (tracksGrid) {
@@ -1824,6 +1910,15 @@ async function openSpotifyPlaylist(spotifyId, name, coverImage = '') {
         if (searchInput) {
             searchInput.value = `Playlist: ${name}`;
         }
+        if (!skipHistory) {
+            pushHistoryState({
+                section: 'spotifyPlaylistPage',
+                mode: 'spotifyPlaylist',
+                spotifyPlaylistId: spotifyId,
+                spotifyPlaylistName: name,
+                searchInput: `Playlist: ${name}`
+            });
+        }
         showNotification(`Showing ${data.tracks.length || 0} tracks from playlist`, 'success');
     } catch (err) {
         console.error('openSpotifyPlaylist error:', err);
@@ -1831,7 +1926,8 @@ async function openSpotifyPlaylist(spotifyId, name, coverImage = '') {
     }
 }
 
-async function viewPlaylist(playlistId, playlistName) {
+async function viewPlaylist(playlistId, playlistName, options = {}) {
+    const { skipHistory = false } = options;
     if (!userData) return;
 
     try {
@@ -1842,12 +1938,7 @@ async function viewPlaylist(playlistId, playlistName) {
 
         if (response.ok) {
             // Переключаемся на раздел поиска и показываем треки плейлиста
-            document.querySelectorAll('.content-section').forEach(s => s.classList.remove('active'));
-            document.getElementById('searchResults').classList.add('active');
-
-            // Обновляем навигацию
-            document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
-            document.querySelector('[data-page="search"]').classList.add('active');
+            setActiveSection('searchResults');
 
             // Показываем треки
             displayResults(data.tracks || []);
@@ -1855,6 +1946,15 @@ async function viewPlaylist(playlistId, playlistName) {
             // Обновляем заголовок поиска
             const searchInput = document.getElementById('searchInput');
             searchInput.value = `Playlist: ${playlistName}`;
+            if (!skipHistory) {
+                pushHistoryState({
+                    section: 'searchResults',
+                    mode: 'localPlaylist',
+                    localPlaylistId: playlistId,
+                    localPlaylistName: playlistName,
+                    searchInput: `Playlist: ${playlistName}`
+                });
+            }
 
             showNotification(`Showing ${data.tracks.length} tracks from "${playlistName}"`, 'success');
         } else {

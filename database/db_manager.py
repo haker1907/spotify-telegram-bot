@@ -8,7 +8,7 @@ from sqlalchemy.engine import Engine
 from typing import Optional, List
 from datetime import datetime, timedelta
 
-from .models import Base, User, Playlist, Track, PlaylistTrack, Album, DownloadHistory, Favorite, TrackCache, AuthToken, TelegramFile, BackupLog, AdminAuditLog, PublicSpotifyPlaylist
+from .models import Base, User, Playlist, Track, PlaylistTrack, Album, DownloadHistory, Favorite, TrackCache, AuthToken, TelegramFile, BackupLog, AdminAuditLog, PublicSpotifyPlaylist, UserSpotifyPlaylist
 import config
 import os
 
@@ -117,7 +117,19 @@ class DatabaseManager:
                         # Don't block startup if schema introspection fails.
                         print(f"⚠️ [DB] Could not ensure users columns: {e}")
 
+                def ensure_user_spotify_playlists(sync_conn):
+                    try:
+                        cols = [row[1] for row in sync_conn.exec_driver_sql("PRAGMA table_info(user_spotify_playlists)")]
+                        # Если таблицы нет — PRAGMA вернёт пустой список; create_all уже создаст её.
+                        # Здесь можно добавить миграции для новых колонок в будущем.
+                        if cols and "total_tracks" not in cols:
+                            print("⚙️ [DB] Adding missing column user_spotify_playlists.total_tracks...")
+                            sync_conn.exec_driver_sql("ALTER TABLE user_spotify_playlists ADD COLUMN total_tracks INTEGER")
+                    except Exception as e:
+                        print(f"⚠️ [DB] Could not ensure user_spotify_playlists columns: {e}")
+
                 await conn.run_sync(ensure_users_columns)
+                await conn.run_sync(ensure_user_spotify_playlists)
         print("✅ База данных инициализирована (WAL mode enabled)")
 
     def get_database_file_path(self) -> Optional[str]:
@@ -458,6 +470,61 @@ class DatabaseManager:
                 .limit(limit)
             )
             return list(result.scalars().all())
+
+    # ========== ЛИЧНЫЕ SPOTIFY ПЛЕЙЛИСТЫ (по playlist_id) ==========
+
+    async def save_user_spotify_playlist(
+        self,
+        user_id: int,
+        spotify_id: str,
+        name: str,
+        owner: Optional[str] = None,
+        spotify_url: Optional[str] = None,
+        total_tracks: Optional[int] = None,
+    ) -> UserSpotifyPlaylist:
+        """Сохранить или обновить Spotify-плейлист в личном списке пользователя."""
+        async with self.async_session() as session:
+            # Гарантируем пользователя
+            user_res = await session.execute(select(User).where(User.id == user_id))
+            user = user_res.scalar_one_or_none()
+            if not user:
+                user = User(id=user_id, username="Web User")
+                session.add(user)
+                await session.flush()
+
+            res = await session.execute(
+                select(UserSpotifyPlaylist)
+                .where(UserSpotifyPlaylist.user_id == user_id)
+                .where(UserSpotifyPlaylist.spotify_id == spotify_id)
+            )
+            row = res.scalar_one_or_none()
+            if not row:
+                row = UserSpotifyPlaylist(
+                    user_id=user_id,
+                    spotify_id=spotify_id,
+                    name=name or "Playlist",
+                    owner=owner,
+                    spotify_url=spotify_url or f"https://open.spotify.com/playlist/{spotify_id}",
+                    total_tracks=total_tracks,
+                )
+                session.add(row)
+            else:
+                row.name = name or row.name
+                row.owner = owner
+                row.spotify_url = spotify_url or row.spotify_url
+                row.total_tracks = total_tracks if total_tracks is not None else row.total_tracks
+            await session.commit()
+            return row
+
+    async def get_user_spotify_playlists(self, user_id: int) -> List[UserSpotifyPlaylist]:
+        """Получить личные сохранённые Spotify-плейлисты пользователя."""
+        async with self.async_session() as session:
+            res = await session.execute(
+                select(UserSpotifyPlaylist)
+                .where(UserSpotifyPlaylist.user_id == user_id)
+                .order_by(UserSpotifyPlaylist.created_at.desc())
+            )
+            return list(res.scalars().all())
     
     # ========== ИСТОРИЯ СКАЧИВАНИЙ (Функция 5) ==========
     

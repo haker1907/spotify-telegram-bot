@@ -270,8 +270,26 @@ class PublicSpotifyPlaylist(Base):
         return f"<PublicSpotifyPlaylist(spotify_id={self.spotify_id}, name={self.name})>"
 
 
+class UserSpotifyPlaylist(Base):
+    """Личный список сохранённых Spotify-плейлистов пользователя (по playlist_id)."""
+    __tablename__ = "user_spotify_playlists"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"))
+    spotify_id: Mapped[str] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(255))
+    owner: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    spotify_url: Mapped[str] = mapped_column(String(500))
+    total_tracks: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<UserSpotifyPlaylist(user_id={self.user_id}, spotify_id={self.spotify_id})>"
+
+
 Index("ix_track_cache_track_format_quality", TrackCache.track_id, TrackCache.file_format, TrackCache.quality)
 Index("ix_download_history_user_downloaded", DownloadHistory.user_id, DownloadHistory.downloaded_at)
 Index("ix_telegram_files_artist_track", TelegramFile.artist, TelegramFile.track_name)
 Index("ix_tracks_download_count", Track.download_count)
 Index("ix_public_spotify_playlists_updated", PublicSpotifyPlaylist.updated_at)
+Index("ix_user_spotify_playlists_user_spotify", UserSpotifyPlaylist.user_id, UserSpotifyPlaylist.spotify_id, unique=True)

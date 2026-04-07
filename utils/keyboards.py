@@ -198,6 +198,66 @@ def get_collection_keyboard(results: list, collection_type: str, collection_id: 
     return InlineKeyboardMarkup(keyboard)
 
 
+def get_spotify_playlist_search_keyboard(playlists: list, lang: str = "ru") -> InlineKeyboardMarkup:
+    """Результаты поиска плейлистов Spotify: сначала плейлисты, затем переход к поиску треков."""
+    keyboard = []
+    for p in playlists[:8]:
+        name = (p.get("name") or "Playlist").replace("\n", " ").strip()
+        owner = (p.get("owner") or "").replace("\n", " ").strip()
+        ntot = p.get("total_tracks")
+        extra = ""
+        if isinstance(ntot, int):
+            extra = f" · {ntot}"
+        if owner:
+            label = f"📀 {name} — {owner}{extra}"
+        else:
+            label = f"📀 {name}{extra}"
+        label = label[:64]
+        keyboard.append([InlineKeyboardButton(label, callback_data=f"spl_{p['id']}")])
+    keyboard.append([
+        InlineKeyboardButton(
+            "🎵 Искать треки" if lang == "ru" else "🎵 Search tracks instead",
+            callback_data="show_spotify_track_search",
+        ),
+    ])
+    return InlineKeyboardMarkup(keyboard)
+
+
+def get_playlist_tracks_browse_keyboard(
+    tracks: list,
+    collection_type: str,
+    collection_id: str,
+    page: int,
+    per_page: int = 10,
+    lang: str = "ru",
+) -> InlineKeyboardMarkup:
+    """Страница треков плейлиста (пагинация) + пакетное скачивание первых 10 из всего плейлиста."""
+    total = len(tracks)
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    page = max(0, min(page, total_pages - 1))
+    chunk = tracks[page * per_page : (page + 1) * per_page]
+    keyboard = []
+    for t in chunk:
+        tid = t.get("id") or ""
+        name = (t.get("name") or "?")[:32]
+        artist = (t.get("artist") or "")[:24]
+        btn = f"🎵 {name} — {artist}"[:64]
+        keyboard.append([InlineKeyboardButton(btn, callback_data=f"download_{tid}")])
+    first_n = min(10, total)
+    batch_text = (
+        f"⬇️ Скачать первые ({first_n})" if lang == "ru" else f"⬇️ Download first ({first_n})"
+    )
+    keyboard.append([InlineKeyboardButton(batch_text, callback_data=f"batchdl_{collection_type}_{collection_id}")])
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton("◀️", callback_data=f"splp_{collection_id}_{page - 1}"))
+    nav_row.append(InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="noop"))
+    if page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton("▶️", callback_data=f"splp_{collection_id}_{page + 1}"))
+    keyboard.append(nav_row)
+    return InlineKeyboardMarkup(keyboard)
+
+
 def get_pagination_keyboard(page: int, total_pages: int, prefix: str) -> InlineKeyboardMarkup:
     """Клавиатура пагинации"""
     keyboard = []

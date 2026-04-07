@@ -259,7 +259,57 @@ class SpotifyService:
         except Exception as e:
             print(f"❌ Search error: {e}")
             return []
-    
+
+    async def search_playlists(self, query: str, limit: int = 10) -> list:
+        """Поиск плейлистов Spotify (Web API с анонимным токеном)."""
+        token = await self._get_anonymous_token()
+        if not token:
+            print("⚠️ Поиск плейлистов недоступен: не удалось получить токен")
+            return []
+
+        try:
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+            }
+            async with httpx.AsyncClient(headers=headers) as client:
+                api_url = "https://api.spotify.com/v1/search"
+                params = {"q": query, "type": "playlist", "limit": limit}
+                response = await client.get(api_url, params=params, timeout=10.0)
+                if response.status_code == 429:
+                    token = await self._get_anonymous_token()
+                    if token:
+                        headers["Authorization"] = f"Bearer {token}"
+                        response = await client.get(api_url, params=params, timeout=10.0)
+
+                if response.status_code != 200:
+                    print(f"⚠️ Playlist search API Error: {response.status_code} {response.text}")
+                    return []
+
+                data = response.json()
+                items = data.get("playlists", {}).get("items", []) or []
+                results = []
+                for p in items:
+                    if not p:
+                        continue
+                    image_url = ""
+                    images = p.get("images") or []
+                    if images:
+                        image_url = images[0].get("url") or ""
+                    owner = (p.get("owner") or {}).get("display_name") or ""
+                    total = (p.get("tracks") or {}).get("total")
+                    results.append({
+                        "id": p.get("id"),
+                        "name": p.get("name") or "Playlist",
+                        "owner": owner,
+                        "image_url": image_url,
+                        "total_tracks": total if isinstance(total, int) else None,
+                    })
+                return [r for r in results if r.get("id")]
+        except Exception as e:
+            print(f"❌ Playlist search error: {e}")
+            return []
+
     def is_playlist_url(self, url: str) -> bool:
         """
         Проверить, является ли URL ссылкой на Spotify плейлист
@@ -362,11 +412,15 @@ class SpotifyService:
                 # Если анонимный API забанен (429), используем данные из HTML
                 use_static_fallback = meta_resp.status_code != 200
 
+                owner_name = ''
                 if meta_resp.status_code == 200:
                     meta = meta_resp.json()
                     entity_name = meta.get('name', 'Unknown')
                     images = meta.get('images', [])
                     if images: entity_image = images[0].get('url')
+                    if collection_type == 'playlist':
+                        own = meta.get('owner') or {}
+                        owner_name = own.get('display_name') or ''
 
                 # Получаем треки
                 tracks = []
@@ -409,7 +463,8 @@ class SpotifyService:
                                 'name': t.get('name'),
                                 'artist': artists,
                                 'image': t_image,
-                                'album': album_name
+                                'album': album_name,
+                                'duration_ms': t.get('duration_ms'),
                             })
                         
                         if collection_type == 'artist' or len(items) < limit or len(tracks) >= 1000:
@@ -495,14 +550,17 @@ class SpotifyService:
 
                         await asyncio.gather(*[update_track_image(t) for t in tracks])
 
-                return {
+                out = {
                     'id': entity_id,
                     'type': collection_type,
                     'name': entity_name,
                     'image': entity_image,
                     'tracks': tracks,
-                    'total_tracks': len(tracks)
+                    'total_tracks': len(tracks),
                 }
+                if collection_type == 'playlist':
+                    out['owner'] = owner_name
+                return out
         except Exception as e:
             print(f"❌ Error fetching {collection_type}: {e}")
             import traceback

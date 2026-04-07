@@ -2,9 +2,10 @@
 Обработчики callback-запросов от inline-клавиатур
 """
 import os
+import html
 from telegram import Update
 from telegram.ext import ContextTypes
-from utils.keyboards import KeyboardBuilder, get_track_actions_keyboard
+from utils.keyboards import KeyboardBuilder, get_track_actions_keyboard, get_playlist_tracks_browse_keyboard
 from services.message_builder import MessageBuilder
 from services.download_service import DownloadService
 from utils.strings import get_string
@@ -48,6 +49,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_playlist_selection(query, context, callback_data, lang)
     elif callback_data.startswith("batchdl_"):
         await batch_download_collection(query, context, callback_data, lang)
+    
+    elif callback_data.startswith("splp_"):
+        await browse_spotify_playlist_page(query, context, callback_data, lang)
+    elif callback_data.startswith("spl_"):
+        await open_spotify_playlist_from_search(query, context, callback_data, lang)
+    elif callback_data == "show_spotify_track_search":
+        await show_spotify_track_search_fallback(query, context, lang)
     
     # Работа с плейлистами
     elif callback_data.startswith("select_playlist_"):
@@ -635,6 +643,182 @@ async def delete_playlist(query, context, callback_data, lang="ru"):
         await query.message.edit_text(
             "❌ Error" if lang == "en" else "❌ Не удалось удалить плейлист",
             parse_mode='HTML'
+        )
+
+
+def _fmt_dur_ms(ms) -> str:
+    if not ms:
+        return "—"
+    s = max(0, int(ms)) // 1000
+    m, sec = divmod(s, 60)
+    h, m = divmod(m, 60)
+    if h:
+        return f"{h}:{m:02d}:{sec:02d}"
+    return f"{m}:{sec:02d}"
+
+
+async def render_playlist_browse_page(message, context, pl_id: str, page: int, lang: str):
+    """Текст + клавиатура: все треки плейлиста (с пагинацией по страницам)."""
+    cache = context.user_data.get("spotify_pl_browse")
+    spotify_service = context.bot_data.get("spotify")
+    if not cache or cache.get("id") != pl_id:
+        if not spotify_service:
+            await message.edit_text(
+                "❌ Spotify недоступен" if lang == "ru" else "❌ Spotify unavailable"
+            )
+            return
+        info = await spotify_service.get_playlist_info(
+            f"https://open.spotify.com/playlist/{pl_id}"
+        )
+        if not info or not info.get("tracks"):
+            await message.edit_text(
+                "❌ Не удалось загрузить плейлист"
+                if lang == "ru"
+                else "❌ Could not load playlist"
+            )
+            return
+        cache = {
+            "id": pl_id,
+            "tracks": info["tracks"],
+            "name": info.get("name"),
+            "owner": info.get("owner", ""),
+        }
+        context.user_data["spotify_pl_browse"] = cache
+
+    tracks = cache["tracks"]
+    per_page = 10
+    total_pages = max(1, (len(tracks) + per_page - 1) // per_page)
+    page = max(0, min(page, total_pages - 1))
+    start = page * per_page
+    chunk = tracks[start : start + per_page]
+
+    total_ms = sum((t.get("duration_ms") or 0) for t in tracks if t.get("duration_ms"))
+    dur_human = ""
+    if total_ms:
+        total_sec = total_ms // 1000
+        h, r = divmod(total_sec, 3600)
+        m, s = divmod(r, 60)
+        if lang == "ru":
+            dur_human = f" · {h} ч. {m} мин." if h else f" · {m} мин."
+        else:
+            dur_human = f" · {h}h {m}m" if h else f" · {m} min."
+
+    title = html.escape(str(cache.get("name") or "Playlist"))
+    owner = cache.get("owner") or ""
+    owner_esc = html.escape(owner) if owner else ""
+
+    lines = [f"📀 <b>{title}</b>"]
+    if owner_esc:
+        lines.append(f"👤 {owner_esc}")
+    cnt_label = "треков" if lang == "ru" else "tracks"
+    lines.append(f"🔢 {len(tracks)} {cnt_label}{dur_human}")
+    lines.append("")
+    page_lbl = "Страница" if lang == "ru" else "Page"
+    lines.append(f"<b>{page_lbl} {page + 1}/{total_pages}</b>")
+
+    for i, t in enumerate(chunk, start=start + 1):
+        nm = html.escape(str(t.get("name") or "?"))
+        ar = html.escape(str(t.get("artist") or ""))
+        dur = _fmt_dur_ms(t.get("duration_ms"))
+        album = t.get("album")
+        line = f"{i}. <b>{nm}</b>\n   {ar} · {dur}"
+        if album:
+            line += f"\n   💿 <i>{html.escape(str(album))}</i>"
+        lines.append(line)
+
+    hint = (
+        "\n\nНажмите кнопку ниже, чтобы скачать трек."
+        if lang == "ru"
+        else "\n\nTap a button below to download a track."
+    )
+    text = "\n".join(lines) + hint
+
+    kb = get_playlist_tracks_browse_keyboard(
+        tracks, "playlist", pl_id, page, per_page=per_page, lang=lang
+    )
+    await message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+
+async def open_spotify_playlist_from_search(query, context, callback_data, lang="ru"):
+    """Открыть плейлист из результатов текстового поиска (колбэк spl_<id>)."""
+    pl_id = callback_data[4:]
+    if not pl_id:
+        return
+    spotify_service = context.bot_data.get("spotify")
+    if not spotify_service:
+        await query.message.reply_text(
+            "❌ Spotify недоступен" if lang == "ru" else "❌ Spotify unavailable"
+        )
+        return
+
+    await query.message.edit_text(get_string("searching", lang), parse_mode="HTML")
+    try:
+        info = await spotify_service.get_playlist_info(
+            f"https://open.spotify.com/playlist/{pl_id}"
+        )
+        if not info or not info.get("tracks"):
+            await query.message.edit_text(
+                "❌ Не удалось открыть плейлист"
+                if lang == "ru"
+                else "❌ Could not open playlist"
+            )
+            return
+        context.user_data["spotify_pl_browse"] = {
+            "id": pl_id,
+            "tracks": info["tracks"],
+            "name": info.get("name"),
+            "owner": info.get("owner", ""),
+        }
+        await render_playlist_browse_page(query.message, context, pl_id, 0, lang)
+    except Exception as e:
+        await query.message.edit_text(
+            f"❌ {'Ошибка' if lang == 'ru' else 'Error'}: {e}"
+        )
+
+
+async def browse_spotify_playlist_page(query, context, callback_data, lang="ru"):
+    """Пагинация треков плейлиста (колбэк splp_<id>_<page>)."""
+    parts = callback_data.split("_", 2)
+    if len(parts) < 3:
+        return
+    _, pl_id, page_s = parts
+    try:
+        page = int(page_s)
+    except ValueError:
+        return
+    await render_playlist_browse_page(query.message, context, pl_id, page, lang)
+
+
+async def show_spotify_track_search_fallback(query, context, lang="ru"):
+    """Показать обычный поиск по трекам, если плейлистиров не хватило."""
+    from handlers.search import build_track_search_keyboard_and_message
+
+    q = context.user_data.get("last_text_search_query") or ""
+    if not q:
+        await query.message.edit_text(
+            "❌ Нет сохранённого запроса. Введите поиск снова."
+            if lang == "ru"
+            else "❌ No saved query. Please search again."
+        )
+        return
+
+    db = context.bot_data.get("db")
+    spotify_service = context.bot_data.get("spotify")
+    try:
+        message, keyboard = await build_track_search_keyboard_and_message(
+            q, db, spotify_service, lang
+        )
+        if not message:
+            await query.message.edit_text(
+                "❌ По этому запросу треки не найдены."
+                if lang == "ru"
+                else "❌ No tracks found for this query."
+            )
+            return
+        await query.message.edit_text(message, reply_markup=keyboard, parse_mode="HTML")
+    except Exception as e:
+        await query.message.edit_text(
+            f"❌ {'Ошибка поиска' if lang == 'ru' else 'Search error'}: {e}"
         )
 
 

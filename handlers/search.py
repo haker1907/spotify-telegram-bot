@@ -4,6 +4,7 @@
 """
 import os
 import hashlib
+import html
 from telegram import Update
 from telegram.ext import ContextTypes
 from services.spotify_service import SpotifyService
@@ -11,11 +12,48 @@ from services.download_service import DownloadService
 from services.message_builder import MessageBuilder
 from utils.strings import get_string
 from utils.keyboards import (
-    get_search_results_keyboard, 
+    get_search_results_keyboard,
     get_track_actions_keyboard,
     get_collection_keyboard,
-    KeyboardBuilder
+    get_spotify_playlist_search_keyboard,
 )
+
+
+async def build_track_search_keyboard_and_message(
+    query: str,
+    db,
+    spotify_service: SpotifyService,
+    lang: str,
+):
+    """Собрать текст и клавиатуру поиска по трекам (библиотека + Spotify). Возвращает (message, keyboard) или (None, None)."""
+    discover_results = []
+    if db:
+        discover_results = await db.search_telegram_files(query, limit=5)
+
+    spotify_results = []
+    if spotify_service:
+        spotify_results = await spotify_service.search_tracks(query, limit=5)
+
+    seen_ids = set()
+    final_results = []
+
+    for track in discover_results:
+        seen_ids.add(track["id"])
+        track = {**track, "name": f"✨ {track['name']}"}
+        final_results.append(track)
+
+    for track in spotify_results:
+        if track["id"] not in seen_ids:
+            final_results.append(track)
+
+    if not final_results:
+        return None, None
+
+    safe_q = html.escape(query)
+    message = f"🔎 <b>Результаты поиска для:</b> <i>{safe_q}</i>\n\n"
+    message += "Выберите трек для скачивания:" if lang == "ru" else "Select a track to download:"
+    keyboard = get_search_results_keyboard(final_results)
+    return message, keyboard
 
 
 async def handle_spotify_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -408,45 +446,37 @@ async def handle_text_search(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
     
     try:
-        # 1. Поиск в Discover (БД)
-        discover_results = []
-        if db:
-            discover_results = await db.search_telegram_files(query, limit=5)
-            
-        # 2. Поиск в Spotify
-        spotify_results = []
+        playlist_results = []
         if spotify_service:
-            spotify_results = await spotify_service.search_tracks(query, limit=5)
-            
-        # Убираем дубликаты (если трек есть и там и там, приоритет Discover)
-        seen_ids = set()
-        final_results = []
-        
-        # Сначала добавляем результаты из Discover
-        for track in discover_results:
-            seen_ids.add(track['id'])
-            # Помечаем, что трек из библиотеки
-            track['name'] = f"✨ {track['name']}"
-            final_results.append(track)
-            
-        # Затем добавляем из Spotify те, которых нет в Discover
-        for track in spotify_results:
-            if track['id'] not in seen_ids:
-                final_results.append(track)
-                
-        if not final_results:
+            playlist_results = await spotify_service.search_playlists(query, limit=8)
+
+        # Сначала показываем плейлисты Spotify; отдельные треки — после входа в плейлист или по кнопке
+        if playlist_results:
+            context.user_data["last_text_search_query"] = query
+            safe_q = html.escape(query)
+            message = (
+                f"🔎 <b>Результаты для:</b> <i>{safe_q}</i>\n\n"
+                f"📋 <b>{'Плейлисты Spotify' if lang == 'ru' else 'Spotify playlists'}</b>\n"
+            )
+            message += (
+                "Выберите плейлист — внутри будут все треки:"
+                if lang == "ru"
+                else "Choose a playlist — all tracks will be listed inside:"
+            )
+            keyboard = get_spotify_playlist_search_keyboard(playlist_results, lang=lang)
+            await status_msg.edit_text(message, reply_markup=keyboard, parse_mode='HTML')
+            return
+
+        message, keyboard = await build_track_search_keyboard_and_message(
+            query, db, spotify_service, lang
+        )
+
+        if not message:
             await status_msg.edit_text(
                 "❌ Ничего не найдено по вашему запросу." if lang == "ru" else "❌ Nothing found for your query."
             )
             return
-            
-        # Формируем сообщение
-        message = f"🔎 <b>Результаты поиска для:</b> <i>{query}</i>\n\n"
-        message += "Выберите трек для скачивания:" if lang == "ru" else "Select a track to download:"
-        
-        # Используем существующую клавиатуру (она берет первые 5-10 треков)
-        keyboard = get_search_results_keyboard(final_results)
-        
+
         await status_msg.edit_text(message, reply_markup=keyboard, parse_mode='HTML')
         
     except Exception as e:

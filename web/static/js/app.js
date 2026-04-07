@@ -941,7 +941,7 @@ function renderSpotifyPlaylistCard(pl) {
     const caption = owner ? `${owner}${total != null ? ` • ${total} tracks` : ''}` : (total != null ? `${total} tracks` : '');
 
     return `
-        <div class="playlist-card spotify-playlist-card" role="button" tabindex="0" onclick="openSpotifyPlaylist('${id}', '${escapeQuotes(name)}')" onkeydown="if(event.key==='Enter' || event.key===' '){ event.preventDefault(); openSpotifyPlaylist('${id}', '${escapeQuotes(name)}'); }">
+        <div class="playlist-card spotify-playlist-card" role="button" tabindex="0" onclick="openSpotifyPlaylist('${id}', '${escapeQuotes(name)}', '${escapeQuotes(img)}')" onkeydown="if(event.key==='Enter' || event.key===' '){ event.preventDefault(); openSpotifyPlaylist('${id}', '${escapeQuotes(name)}', '${escapeQuotes(img)}'); }">
             <div class="playlist-cover">
                 ${img ? `<img loading="lazy" decoding="async" src="${img}" alt="${escapeHtml(name)}" />`
             : `<div class="playlist-placeholder-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 19h2V6H5v2h4v11zm4-11v11h2v-4h4v-2h-4V8h4V6h-4c-1.1 0-2 .9-2 2z"/></svg></div>`}
@@ -1763,7 +1763,7 @@ function displayMySpotifyPlaylists(playlists) {
     grid.innerHTML = playlists.map(pl => renderSpotifyPlaylistCard(pl)).join('');
 }
 
-async function openSpotifyPlaylist(spotifyId, name) {
+async function openSpotifyPlaylist(spotifyId, name, coverImage = '') {
     try {
         const response = await fetch(`/api/spotify-playlists/${spotifyId}/tracks`);
         const data = await response.json();
@@ -1779,12 +1779,37 @@ async function openSpotifyPlaylist(spotifyId, name) {
             owner: data.owner || '',
         };
 
+        const page = document.getElementById('spotifyPlaylistPage');
+        const tracksGrid = document.getElementById('spotifyPlaylistTracksGrid');
+        const titleEl = document.getElementById('spotifyPlaylistTitle');
+        const subtitleEl = document.getElementById('spotifyPlaylistSubtitle');
+        const coverEl = document.getElementById('spotifyPlaylistCover');
+        const totalTracks = data.total_tracks || (data.tracks ? data.tracks.length : 0);
+        const owner = data.owner || '';
+        const resolvedCover = coverImage || data.image || '';
+        if (titleEl) titleEl.textContent = name || 'Playlist';
+        if (subtitleEl) {
+            subtitleEl.textContent = owner
+                ? `${owner} • ${totalTracks} tracks`
+                : `${totalTracks} tracks`;
+        }
+        if (coverEl) {
+            coverEl.innerHTML = resolvedCover
+                ? `<img loading="lazy" decoding="async" src="${resolvedCover}" alt="${escapeHtml(name || 'Playlist')}" />`
+                : `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9 19h2V6H5v2h4v11zm4-11v11h2v-4h4v-2h-4V8h4V6h-4c-1.1 0-2 .9-2 2z"/></svg>`;
+        }
+
         document.querySelectorAll('.content-section').forEach(s => s.classList.remove('active'));
-        document.getElementById('searchResults').classList.add('active');
+        page?.classList.add('active');
         document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
         document.querySelector('[data-page="search"]').classList.add('active');
 
-        displayResults(data.tracks || []);
+        resultsData = data.tracks || [];
+        if (tracksGrid) {
+            tracksGrid.innerHTML = resultsData.length
+                ? resultsData.map((track, index) => renderTrackCard(track, index, 'search')).join('')
+                : window.AppUI.emptyState('Playlist is empty');
+        }
 
         const searchInput = document.getElementById('searchInput');
         if (searchInput) {

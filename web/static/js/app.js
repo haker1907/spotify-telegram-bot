@@ -832,8 +832,8 @@ function renderSpotifyPlaylistCard(pl) {
 
     return `
         <div class="playlist-card spotify-playlist-card">
-            <div class="playlist-cover">
-                ${img ? `<img loading="lazy" decoding="async" src="${img}" alt="${escapeHtml(name)}" />`
+            <div class="playlist-cover" style="width: -webkit-fill-available;">
+                ${img ? `<img loading="lazy" decoding="async" src="${img}" style="width: -webkit-fill-available;" alt="${escapeHtml(name)}" />`
             : `<div class="playlist-placeholder-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 19h2V6H5v2h4v11zm4-11v11h2v-4h4v-2h-4V8h4V6h-4c-1.1 0-2 .9-2 2z"/></svg></div>`}
             </div>
             <div class="playlist-meta">

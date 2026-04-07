@@ -1661,10 +1661,15 @@ def ensure_track_cached(loop, track_id: str, artist: str, track_name: str, image
         if telegram_file_by_name:
             file_id = telegram_file_by_name.file_id
         else:
-            for q in ['320', '192', '128', 'FLAC']:
-                file_id = loop.run_until_complete(db.get_cached_file_id(track_id, quality=q))
-                if file_id:
-                    break
+            # Нечёткий фолбэк: диакритика/пунктуация/порядок артистов могут отличаться
+            telegram_file_fuzzy = loop.run_until_complete(db.get_telegram_file_by_name_fuzzy(artist, track_name))
+            if telegram_file_fuzzy:
+                file_id = telegram_file_fuzzy.file_id
+            else:
+                for q in ['320', '192', '128', 'FLAC']:
+                    file_id = loop.run_until_complete(db.get_cached_file_id(track_id, quality=q))
+                    if file_id:
+                        break
 
     if file_id:
         # Нормализуем связь track_id -> file_id, чтобы следующий поиск был быстрее.
@@ -2090,7 +2095,9 @@ def prepare_stream():
                 'cached': bool(result.get('cached')),
                 'title': f"{artist} - {track_name}"
             })
-        return jsonify({'error': result.get('error') or 'Failed to prepare stream'}), 500
+        err = result.get('error') or 'Failed to prepare stream'
+        # Источник может быть недоступен (quota/cookies/YouTube restrictions) — отдаем 503 как временную проблему.
+        return jsonify({'error': err}), 503
             
     except Exception as e:
         print(f"❌ Prepare stream error: {e}")

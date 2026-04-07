@@ -7,6 +7,8 @@ from sqlalchemy import select, delete, event, func, or_
 from sqlalchemy.engine import Engine
 from typing import Optional, List
 from datetime import datetime, timedelta
+import re
+import unicodedata
 
 from .models import Base, User, Playlist, Track, PlaylistTrack, Album, DownloadHistory, Favorite, TrackCache, AuthToken, TelegramFile, BackupLog, AdminAuditLog, PublicSpotifyPlaylist, UserSpotifyPlaylist
 import config
@@ -1213,6 +1215,64 @@ class DatabaseManager:
                 .limit(1)
             )
             return result.scalar_one_or_none()
+
+    async def get_telegram_file_by_name_fuzzy(self, artist: str, track_name: str, limit: int = 250) -> Optional[TelegramFile]:
+        """
+        Нечёткий поиск файла в Telegram Storage:
+        помогает, когда отличаются диакритика/пунктуация/вариант записи артистов.
+        """
+        def _norm(s: str) -> str:
+            s = (s or "").strip().lower()
+            s = unicodedata.normalize("NFKD", s)
+            s = "".join(ch for ch in s if not unicodedata.combining(ch))
+            s = re.sub(r"[^a-z0-9а-яё]+", " ", s, flags=re.IGNORECASE)
+            return re.sub(r"\s+", " ", s).strip()
+
+        target_artist = _norm(artist)
+        target_track = _norm(track_name)
+        if not target_track:
+            return None
+
+        track_tokens = set(target_track.split())
+        artist_tokens = set(target_artist.split())
+
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(TelegramFile)
+                .order_by(TelegramFile.uploaded_at.desc())
+                .limit(limit)
+            )
+            candidates = list(result.scalars().all())
+
+        best = None
+        best_score = 0.0
+        for c in candidates:
+            c_track = _norm(c.track_name or "")
+            c_artist = _norm(c.artist or "")
+            if not c_track:
+                continue
+
+            c_track_tokens = set(c_track.split())
+            c_artist_tokens = set(c_artist.split())
+
+            track_overlap = (len(track_tokens & c_track_tokens) / max(1, len(track_tokens)))
+            artist_overlap = 0.0
+            if artist_tokens:
+                artist_overlap = (len(artist_tokens & c_artist_tokens) / max(1, len(artist_tokens)))
+
+            score = (track_overlap * 0.8) + (artist_overlap * 0.2)
+            if c_track == target_track:
+                score += 0.25
+            if c_artist == target_artist and target_artist:
+                score += 0.1
+
+            if score > best_score:
+                best_score = score
+                best = c
+
+        if best and best_score >= 0.72:
+            return best
+        return None
 
     async def search_telegram_files(self, query: str, limit: int = 10) -> List[dict]:
         """Поиск файлов в Telegram Storage (Discover) по артисту или названию"""

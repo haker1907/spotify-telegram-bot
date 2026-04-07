@@ -518,6 +518,75 @@ def admin_delete_track():
         print(f"❌ Admin delete track error: {e}")
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/admin/api/playlists/public', methods=['GET'])
+@require_auth
+@require_admin
+def admin_public_playlists():
+    """Админ: список публичных Spotify-плейлистов."""
+    try:
+        limit = int(request.args.get('limit', 100))
+        limit = max(1, min(limit, 300))
+        items = run_async(db.get_public_spotify_playlists(limit=limit))
+        playlists = []
+        for p in items:
+            playlists.append({
+                'spotify_id': getattr(p, 'spotify_id', None),
+                'name': getattr(p, 'name', ''),
+                'owner': getattr(p, 'owner', ''),
+                'spotify_url': getattr(p, 'spotify_url', ''),
+                'total_tracks': getattr(p, 'total_tracks', None),
+                'is_cached_public': bool(getattr(p, 'is_cached_public', 0)),
+                'cached_tracks_count': getattr(p, 'cached_tracks_count', None),
+                'updated_at': getattr(p, 'updated_at', None).isoformat() if getattr(p, 'updated_at', None) else None
+            })
+        return jsonify({'playlists': playlists})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/api/playlists/public/delete', methods=['POST'])
+@require_auth
+@require_admin
+def admin_delete_public_playlist():
+    """Админ: удалить публичный Spotify-плейлист из каталога."""
+    try:
+        data = request.json or {}
+        spotify_id = (data.get('spotify_id') or '').strip()
+        if not spotify_id:
+            return jsonify({'error': 'spotify_id is required'}), 400
+        deleted = run_async(db.delete_public_spotify_playlist(spotify_id))
+        if not deleted:
+            return jsonify({'error': 'Playlist not found'}), 404
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/api/playlists/public/cache', methods=['POST'])
+@require_auth
+@require_admin
+def admin_cache_public_playlist():
+    """Админ: запустить кэширование плейлиста в канал (job)."""
+    try:
+        admin_id = getattr(g, 'current_user_id', None)
+        data = request.json or {}
+        spotify_id = (data.get('spotify_id') or '').strip()
+        limit = data.get('limit', 100)
+        if not spotify_id:
+            return jsonify({'error': 'spotify_id is required'}), 400
+        job_id = str(uuid.uuid4())
+        _set_playlist_cache_job(job_id, status='queued', progress_percent=0, message='Queued...')
+        thread = threading.Thread(
+            target=_run_playlist_cache_job,
+            args=(job_id, int(admin_id), spotify_id, limit),
+            daemon=True
+        )
+        thread.start()
+        return jsonify({'success': True, 'job_id': job_id})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/favicon.ico')
 def favicon():
     # Чтобы не было 404 в консоли браузера: иконка не критична для работы приложения.
@@ -1745,6 +1814,42 @@ def ensure_track_cached(loop, track_id: str, artist: str, track_name: str, image
     return {'success': True, 'cached': False, 'file_id': file_id, 'stream_url': file_url}
 
 
+def find_cached_file_id(loop, track_id: str, artist: str, track_name: str) -> str | None:
+    """Найти file_id в кэше без попытки скачивания."""
+    telegram_file = loop.run_until_complete(db.get_telegram_file(track_id))
+    if telegram_file and telegram_file.file_id:
+        return telegram_file.file_id
+
+    telegram_file_by_name = loop.run_until_complete(db.get_telegram_file_by_name(artist, track_name))
+    if telegram_file_by_name and telegram_file_by_name.file_id:
+        return telegram_file_by_name.file_id
+
+    telegram_file_fuzzy = loop.run_until_complete(db.get_telegram_file_by_name_fuzzy(artist, track_name))
+    if telegram_file_fuzzy and telegram_file_fuzzy.file_id:
+        return telegram_file_fuzzy.file_id
+
+    for q in ['320', '192', '128', 'FLAC']:
+        fid = loop.run_until_complete(db.get_cached_file_id(track_id, quality=q))
+        if fid:
+            return fid
+    return None
+
+
+def _get_first_missing_track_index(loop, tracks: list[dict]) -> int:
+    """Вернуть индекс первого трека, которого нет в кэше; если все есть — len(tracks)."""
+    for idx, t in enumerate(tracks):
+        tid = (t.get('id') or '').strip()
+        artist = (t.get('artist') or '').strip()
+        name = (t.get('name') or '').strip()
+        if not name or not artist:
+            return idx
+        if not tid:
+            tid = hashlib.md5(f"{artist}_{name}".lower().encode()).hexdigest()[:16]
+        if not find_cached_file_id(loop, tid, artist, name):
+            return idx
+    return len(tracks)
+
+
 def _run_playlist_cache_job(job_id: str, user_id: int, spotify_id: str, requested_limit: int):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -1763,10 +1868,8 @@ def _run_playlist_cache_job(job_id: str, user_id: int, spotify_id: str, requeste
         playlist_owner = info.get('owner') or ''
         total_tracks = len(all_tracks)
 
-        existing_public = loop.run_until_complete(db.get_public_spotify_playlist(spotify_id))
-        start_from = 0
-        if existing_public and existing_public.cached_tracks_count:
-            start_from = max(0, min(int(existing_public.cached_tracks_count), total_tracks))
+        # Resume должен идти с первого реально отсутствующего трека, а не по "кол-ву успехов".
+        start_from = _get_first_missing_track_index(loop, all_tracks)
 
         end_index = min(start_from + limit, total_tracks)
         tracks = all_tracks[start_from:end_index]
@@ -1950,11 +2053,8 @@ def cache_spotify_playlist(spotify_id: str):
             return jsonify({'error': 'Playlist not found or empty'}), 404
 
         all_tracks = info.get('tracks') or []
-        existing_public = loop.run_until_complete(db.get_public_spotify_playlist(spotify_id))
-        start_from = 0
-        if existing_public and existing_public.cached_tracks_count:
-            # Resume from last successful checkpoint (contiguous progress).
-            start_from = max(0, min(int(existing_public.cached_tracks_count), len(all_tracks)))
+        # Resume должен идти с первого реально отсутствующего трека, а не по "кол-ву успехов".
+        start_from = _get_first_missing_track_index(loop, all_tracks)
 
         end_index = min(start_from + limit, len(all_tracks))
         tracks = all_tracks[start_from:end_index]

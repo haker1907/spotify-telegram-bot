@@ -509,6 +509,15 @@ class DatabaseManager:
             )
             return result.scalar_one_or_none()
 
+    async def delete_public_spotify_playlist(self, spotify_id: str) -> bool:
+        """Удалить публичный Spotify-плейлист по ID."""
+        async with self.async_session() as session:
+            result = await session.execute(
+                delete(PublicSpotifyPlaylist).where(PublicSpotifyPlaylist.spotify_id == spotify_id)
+            )
+            await session.commit()
+            return result.rowcount > 0
+
     async def get_public_cached_spotify_playlists(self, limit: int = 30) -> List[PublicSpotifyPlaylist]:
         """Получить публичные плейлисты, прогретые в Telegram Storage."""
         async with self.async_session() as session:

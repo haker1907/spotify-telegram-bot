@@ -141,10 +141,18 @@
             </div>
             <div id="tracksList"></div>
         </div>
+
+        <div class="admin-card">
+            <div class="admin-card-title-row">
+                <h2>Playlist control</h2>
+            </div>
+            <div id="playlistList"></div>
+        </div>
     </div>
 
     <script>
         const tracksList = document.getElementById('tracksList');
+        const playlistList = document.getElementById('playlistList');
         const refreshBtn = document.getElementById('refreshBtn');
         const adminAuthMsg = document.getElementById('adminAuthMsg');
 
@@ -194,6 +202,55 @@
             tracksList.innerHTML = `<div class="results-grid" id="adminTracksGrid">${cards}</div>`;
         }
 
+        function renderPlaylists(playlists) {
+            if (!playlists || playlists.length === 0) {
+                playlistList.innerHTML = '<div style="opacity:0.8;">No playlists</div>';
+                return;
+            }
+            const rows = playlists.map(pl => {
+                const sid = String(pl.spotify_id || '').replace(/"/g, '&quot;');
+                const safeName = String(pl.name || '').replace(/"/g, '&quot;');
+                const safeOwner = String(pl.owner || '').replace(/"/g, '&quot;');
+                const total = pl.total_tracks ?? '-';
+                const cached = pl.cached_tracks_count ?? 0;
+                const status = pl.is_cached_public ? 'cached' : 'not cached';
+                const updated = pl.updated_at || '';
+                return `
+                    <tr>
+                        <td class="mono">${sid}</td>
+                        <td>${safeName}</td>
+                        <td>${safeOwner}</td>
+                        <td>${total}</td>
+                        <td>${cached}</td>
+                        <td>${status}</td>
+                        <td class="mono">${updated}</td>
+                        <td>
+                            <button class="admin-btn" style="padding:6px 10px; margin-right:6px;" onclick="cachePlaylistNow('${sid}')">Cache now</button>
+                            <button class="admin-btn" style="padding:6px 10px; background:#b92d2d;" onclick="deletePublicPlaylist('${sid}')">Delete</button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+            playlistList.innerHTML = `
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>Spotify ID</th>
+                            <th>Name</th>
+                            <th>Owner</th>
+                            <th>Total</th>
+                            <th>Cached</th>
+                            <th>Status</th>
+                            <th>Updated</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            `;
+        }
+
         async function apiGet(path) {
             const res = await fetch(path, {
                 credentials: 'same-origin'
@@ -212,8 +269,10 @@
                 tracksList.innerHTML = 'Loading...';
 
                 const tracksData = await apiGet('/api/library?limit=500');
+                const playlistsData = await apiGet('/admin/api/playlists/public?limit=200');
 
                 renderTracks(tracksData.tracks || []);
+                renderPlaylists(playlistsData.playlists || []);
 
                 showMsg('');
             } catch (e) {
@@ -248,6 +307,45 @@
             } catch (e) {
                 console.error(e);
                 showMsg(e.message || 'Delete failed');
+            }
+        }
+
+        async function deletePublicPlaylist(spotifyId) {
+            if (!spotifyId) return;
+            const ok = confirm(`Delete public playlist?\n\n${spotifyId}`);
+            if (!ok) return;
+            try {
+                showMsg('Deleting playlist...');
+                const res = await fetch('/admin/api/playlists/public/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ spotify_id: spotifyId })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Delete failed');
+                await loadAdmin();
+                showMsg('');
+            } catch (e) {
+                showMsg(e.message || 'Delete failed');
+            }
+        }
+
+        async function cachePlaylistNow(spotifyId) {
+            if (!spotifyId) return;
+            try {
+                showMsg('Starting cache job...');
+                const res = await fetch('/admin/api/playlists/public/cache', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ spotify_id: spotifyId, limit: 100 })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Cache start failed');
+                showMsg(`Cache job started: ${data.job_id}`);
+            } catch (e) {
+                showMsg(e.message || 'Cache start failed');
             }
         }
 

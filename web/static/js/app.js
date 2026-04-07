@@ -50,8 +50,8 @@ function updateQueueStatus() {
 }
 
 // Initialize app
-document.addEventListener('DOMContentLoaded', () => {
-    checkAuthToken();
+document.addEventListener('DOMContentLoaded', async () => {
+    await checkAuthToken();
     updateUserUI();
     initializeNavigation();
     initializeHeaderNav();
@@ -61,6 +61,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initializePlaylists();
     initializeUploadTrack();
     initializeViewToggle();
+    // Render cards after auth is known to avoid inconsistent action buttons.
     loadHomeCachedPlaylists();
     loadLibrary();
     restoreLastPlayedTrackUI();

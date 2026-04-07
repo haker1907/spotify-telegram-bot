@@ -100,6 +100,15 @@ async def handle_spotify_link(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "owner": info.get("owner", ""),
                 "total_tracks": len(info.get("tracks", [])),
             }
+            if db:
+                await db.save_public_spotify_playlist(
+                    spotify_id=parsed["id"],
+                    name=playlist_item["name"],
+                    owner=playlist_item["owner"],
+                    spotify_url=f"https://open.spotify.com/playlist/{parsed['id']}",
+                    total_tracks=playlist_item["total_tracks"],
+                    added_by_user_id=user_id,
+                )
             safe_name = html.escape(str(playlist_item["name"]))
             message = f"📀 <b>{safe_name}</b>\n"
             if playlist_item["owner"]:

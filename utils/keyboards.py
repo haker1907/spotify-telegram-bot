@@ -15,6 +15,7 @@ class KeyboardBuilder:
         keyboard = [
             [KeyboardButton(get_string("btn_search", lang))],
             [KeyboardButton(get_string("btn_history", lang)), KeyboardButton(get_string("btn_my_playlists", lang))],
+            [KeyboardButton(get_string("btn_public_playlists", lang))],
             [KeyboardButton(get_string("btn_favorites", lang))],
             [KeyboardButton(get_string("btn_settings", lang)), KeyboardButton(get_string("btn_help", lang))]
         ]
@@ -238,6 +239,24 @@ def get_single_spotify_playlist_keyboard(playlist: dict, lang: str = "ru") -> In
     return InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data=f"spl_{pl_id}")]])
 
 
+def get_public_spotify_playlists_keyboard(playlists: list, lang: str = "ru") -> InlineKeyboardMarkup:
+    """Клавиатура списка публичных Spotify-плейлистов."""
+    keyboard = []
+    for p in playlists[:20]:
+        sid = getattr(p, "spotify_id", None) or p.get("spotify_id")
+        if not sid:
+            continue
+        name = (getattr(p, "name", None) or p.get("name") or "Playlist").replace("\n", " ").strip()
+        owner = (getattr(p, "owner", None) or p.get("owner") or "").replace("\n", " ").strip()
+        total = getattr(p, "total_tracks", None)
+        if total is None and isinstance(p, dict):
+            total = p.get("total_tracks")
+        extra = f" · {total}" if isinstance(total, int) else ""
+        label = f"📀 {name} — {owner}{extra}" if owner else f"📀 {name}{extra}"
+        keyboard.append([InlineKeyboardButton(label[:64], callback_data=f"spl_{sid}")])
+    return InlineKeyboardMarkup(keyboard if keyboard else [[InlineKeyboardButton("—", callback_data="noop")]])
+
+
 def get_playlist_tracks_browse_keyboard(
     tracks: list,
     collection_type: str,
@@ -258,7 +277,8 @@ def get_playlist_tracks_browse_keyboard(
         artist = (t.get("artist") or "")[:24]
         btn = f"🎵 {name} — {artist}"[:64]
         keyboard.append([InlineKeyboardButton(btn, callback_data=f"download_{tid}")])
-    first_n = min(10, total)
+    batch_limit = 50 if collection_type == "playlist" else 10
+    first_n = min(batch_limit, total)
     batch_text = (
         f"⬇️ Скачать первые ({first_n})" if lang == "ru" else f"⬇️ Download first ({first_n})"
     )

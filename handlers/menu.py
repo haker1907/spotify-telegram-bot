@@ -4,7 +4,7 @@
 from telegram import Update
 from telegram.ext import ContextTypes
 from handlers.history import history_command
-from handlers.playlist import my_playlists_command
+from handlers.playlist import my_playlists_command, public_playlists_command
 from handlers.settings import settings_command
 from handlers.start import help_command
 from handlers.favorites import favorites_command
@@ -31,6 +31,8 @@ async def handle_menu_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE
         await history_command(update, context)
     elif text in [get_string("btn_my_playlists", "ru"), get_string("btn_my_playlists", "en")]:
         await my_playlists_command(update, context)
+    elif text in [get_string("btn_public_playlists", "ru"), get_string("btn_public_playlists", "en")]:
+        await public_playlists_command(update, context)
     elif text in [get_string("btn_help", "ru"), get_string("btn_help", "en")]:
         await help_command(update, context)
     elif text in [get_string("btn_favorites", "ru"), get_string("btn_favorites", "en")]:

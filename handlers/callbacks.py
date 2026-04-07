@@ -763,6 +763,16 @@ async def open_spotify_playlist_from_search(query, context, callback_data, lang=
                 else "❌ Could not open playlist"
             )
             return
+        db = context.bot_data.get("db")
+        if db:
+            await db.save_public_spotify_playlist(
+                spotify_id=pl_id,
+                name=info.get("name") or "Playlist",
+                owner=info.get("owner", ""),
+                spotify_url=f"https://open.spotify.com/playlist/{pl_id}",
+                total_tracks=len(info.get("tracks", [])),
+                added_by_user_id=query.from_user.id,
+            )
         context.user_data["spotify_pl_browse"] = {
             "id": pl_id,
             "tracks": info["tracks"],
@@ -823,7 +833,7 @@ async def show_spotify_track_search_fallback(query, context, lang="ru"):
 
 
 async def batch_download_collection(query, context, callback_data, lang="ru"):
-    """Пакетное скачивание первых треков коллекции."""
+    """Пакетное скачивание треков коллекции (для playlist - расширенный лимит)."""
     parts = callback_data.split("_", 2)
     if len(parts) < 3:
         return
@@ -841,7 +851,12 @@ async def batch_download_collection(query, context, callback_data, lang="ru"):
         else:
             info = await spotify_service.get_artist_info(f"https://open.spotify.com/artist/{collection_id}")
 
-        tracks = (info or {}).get("tracks", [])[:10]
+        all_tracks = (info or {}).get("tracks", [])
+        if collection_type == "playlist":
+            # Для плейлистов даем расширенный batch, но с безопасным лимитом.
+            tracks = all_tracks[:50]
+        else:
+            tracks = all_tracks[:10]
         if not tracks:
             await query.message.reply_text("❌ Нет треков для скачивания" if lang == "ru" else "❌ No tracks to download")
             return

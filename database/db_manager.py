@@ -8,7 +8,7 @@ from sqlalchemy.engine import Engine
 from typing import Optional, List
 from datetime import datetime, timedelta
 
-from .models import Base, User, Playlist, Track, PlaylistTrack, Album, DownloadHistory, Favorite, TrackCache, AuthToken, TelegramFile, BackupLog, AdminAuditLog
+from .models import Base, User, Playlist, Track, PlaylistTrack, Album, DownloadHistory, Favorite, TrackCache, AuthToken, TelegramFile, BackupLog, AdminAuditLog, PublicSpotifyPlaylist
 import config
 import os
 
@@ -410,6 +410,54 @@ class DatabaseManager:
                 .where(PlaylistTrack.playlist_id == playlist_id)
             )
             return len(list(result.scalars().all()))
+
+    # ========== ПУБЛИЧНЫЕ SPOTIFY ПЛЕЙЛИСТЫ ==========
+
+    async def save_public_spotify_playlist(
+        self,
+        spotify_id: str,
+        name: str,
+        owner: Optional[str] = None,
+        spotify_url: Optional[str] = None,
+        total_tracks: Optional[int] = None,
+        added_by_user_id: Optional[int] = None,
+    ) -> PublicSpotifyPlaylist:
+        """Создать или обновить запись публичного Spotify-плейлиста."""
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(PublicSpotifyPlaylist).where(PublicSpotifyPlaylist.spotify_id == spotify_id)
+            )
+            pl = result.scalar_one_or_none()
+            if not pl:
+                pl = PublicSpotifyPlaylist(
+                    spotify_id=spotify_id,
+                    name=name or "Playlist",
+                    owner=owner,
+                    spotify_url=spotify_url or f"https://open.spotify.com/playlist/{spotify_id}",
+                    total_tracks=total_tracks,
+                    added_by_user_id=added_by_user_id,
+                )
+                session.add(pl)
+            else:
+                pl.name = name or pl.name
+                pl.owner = owner
+                pl.spotify_url = spotify_url or pl.spotify_url
+                pl.total_tracks = total_tracks
+                if added_by_user_id:
+                    pl.added_by_user_id = added_by_user_id
+                pl.updated_at = datetime.utcnow()
+            await session.commit()
+            return pl
+
+    async def get_public_spotify_playlists(self, limit: int = 30) -> List[PublicSpotifyPlaylist]:
+        """Получить последние публичные Spotify-плейлисты (для всех пользователей)."""
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(PublicSpotifyPlaylist)
+                .order_by(PublicSpotifyPlaylist.updated_at.desc())
+                .limit(limit)
+            )
+            return list(result.scalars().all())
     
     # ========== ИСТОРИЯ СКАЧИВАНИЙ (Функция 5) ==========
     

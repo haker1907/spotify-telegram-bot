@@ -12,6 +12,7 @@ STRINGS = {
         "btn_help": "ℹ️ Помощь",
         "btn_back": "◀️ Назад",
         "btn_my_playlists": "📋 Плейлисты",
+        "btn_public_playlists": "🌍 Общие Spotify плейлисты",
         "btn_share_bot": "📣 Поделиться ботом",
         
         # Настройки
@@ -91,6 +92,8 @@ STRINGS = {
         "remove_from_playlist_success": "✅ Трек удален из плейлиста",
         "playlist_tracks_count": "({count} треков)",
         "playlist_empty_info": "Плейлист пуст. Добавьте треки!",
+        "public_playlists_title": "🌍 <b>Общие Spotify плейлисты</b>\n\nДобавлены всеми пользователями:",
+        "public_playlists_empty": "🌍 <b>Общие Spotify плейлисты</b>\n\nПока пусто. Отправьте Spotify-ссылку на плейлист, и он появится здесь.",
         
         # История и избранное
         "history_empty": "📜 История скачиваний пуста",
@@ -121,6 +124,7 @@ STRINGS = {
         "btn_help": "ℹ️ Help",
         "btn_back": "◀️ Back",
         "btn_my_playlists": "📋 Playlists",
+        "btn_public_playlists": "🌍 Global Spotify playlists",
         "btn_share_bot": "📣 Share bot",
         
         # Settings
@@ -200,6 +204,8 @@ STRINGS = {
         "remove_from_playlist_success": "✅ Track removed from playlist",
         "playlist_tracks_count": "({count} tracks)",
         "playlist_empty_info": "Playlist is empty. Add tracks!",
+        "public_playlists_title": "🌍 <b>Global Spotify playlists</b>\n\nAdded by all users:",
+        "public_playlists_empty": "🌍 <b>Global Spotify playlists</b>\n\nNo playlists yet. Send a Spotify playlist link and it will appear here.",
         
         # History & Favorites
         "history_empty": "📜 Download history is empty",

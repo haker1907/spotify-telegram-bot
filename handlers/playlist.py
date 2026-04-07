@@ -3,9 +3,10 @@
 """
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
-from utils.keyboards import KeyboardBuilder, get_track_actions_keyboard
+from utils.keyboards import KeyboardBuilder, get_track_actions_keyboard, get_public_spotify_playlists_keyboard
 from services.message_builder import MessageBuilder
 import config
+from utils.strings import get_string
 
 # Состояния для ConversationHandler
 WAITING_PLAYLIST_NAME, WAITING_PLAYLIST_DESCRIPTION = range(2)
@@ -52,6 +53,29 @@ async def my_playlists_command(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=keyboard,
         parse_mode='HTML'
     )
+
+
+async def public_playlists_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать глобальные Spotify-плейлисты от всех пользователей."""
+    user_id = update.effective_user.id
+    db = context.bot_data.get('db')
+    lang = "ru"
+    if db:
+        user = await db.get_or_create_user(user_id, update.effective_user)
+        lang = user.language
+
+    if not db:
+        await update.message.reply_text("❌ База данных недоступна")
+        return
+
+    playlists = await db.get_public_spotify_playlists(limit=20)
+    if not playlists:
+        await update.message.reply_text(get_string("public_playlists_empty", lang), parse_mode='HTML')
+        return
+
+    message = get_string("public_playlists_title", lang)
+    keyboard = get_public_spotify_playlists_keyboard(playlists, lang=lang)
+    await update.message.reply_text(message, reply_markup=keyboard, parse_mode='HTML')
 
 
 async def create_playlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

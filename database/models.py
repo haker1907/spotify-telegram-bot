@@ -253,7 +253,25 @@ class AdminAuditLog(Base):
         return f"<AdminAuditLog(action={self.action}, admin={self.admin_user_id})>"
 
 
+class PublicSpotifyPlaylist(Base):
+    """Глобальный каталог Spotify-плейлистов, добавленных пользователями."""
+    __tablename__ = "public_spotify_playlists"
+
+    spotify_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    owner: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    spotify_url: Mapped[str] = mapped_column(String(500))
+    total_tracks: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    added_by_user_id: Mapped[Optional[int]] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<PublicSpotifyPlaylist(spotify_id={self.spotify_id}, name={self.name})>"
+
+
 Index("ix_track_cache_track_format_quality", TrackCache.track_id, TrackCache.file_format, TrackCache.quality)
 Index("ix_download_history_user_downloaded", DownloadHistory.user_id, DownloadHistory.downloaded_at)
 Index("ix_telegram_files_artist_track", TelegramFile.artist, TelegramFile.track_name)
 Index("ix_tracks_download_count", Track.download_count)
+Index("ix_public_spotify_playlists_updated", PublicSpotifyPlaylist.updated_at)

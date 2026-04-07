@@ -12,6 +12,8 @@ class YouTubeAPIService:
     def __init__(self, api_key: str = None):
         self.api_key = api_key or os.getenv('YOUTUBE_API_KEY')
         self.base_url = "https://www.googleapis.com/youtube/v3"
+        self.quota_exceeded = False
+        self._quota_warning_shown = False
         
         if not self.api_key:
             print("YOUTUBE_API_KEY not set. YouTube search will use fallback method.")
@@ -31,6 +33,11 @@ class YouTubeAPIService:
         """
         if not self.api_key:
             print("YouTube API key not configured")
+            return None
+        if self.quota_exceeded:
+            if not self._quota_warning_shown:
+                print("YouTube API disabled for this runtime (quota exceeded). Using yt-dlp fallback.")
+                self._quota_warning_shown = True
             return None
         
         try:
@@ -75,6 +82,8 @@ class YouTubeAPIService:
                 
                 if error_reason == 'quotaExceeded':
                     print("YouTube API quota exceeded. Try again tomorrow or increase quota.")
+                    self.quota_exceeded = True
+                    self._quota_warning_shown = False
                 else:
                     print(f"YouTube API error 403: {error_reason}")
                 return None

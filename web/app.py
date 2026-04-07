@@ -1937,7 +1937,7 @@ def _run_playlist_cache_job(job_id: str, user_id: int, spotify_id: str, requeste
                 job_id,
                 status='running',
                 progress_percent=progress,
-                message=f'Caching {processed}/{len(tracks)}',
+                message=f'Caching {processed}/{len(tracks)} (ok: {cached_count + uploaded_count}, failed: {failed_count})',
                 processed=processed,
                 current_track=f'{artist} - {name}'
             )

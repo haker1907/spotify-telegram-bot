@@ -1356,7 +1356,7 @@ async function playFromYouTube(track) {
                 showNotification('Now playing!', 'success');
             }
         } else {
-            showNotification(data.error || 'Could not load track', 'error');
+            showNotification(normalizeBackendErrorMessage(data.error) || 'Could not load track', 'error');
         }
     } catch (error) {
         console.error('Stream error:', error);
@@ -2010,6 +2010,18 @@ function showNotification(message, type = 'info') {
         return;
     }
     console.log(`[${type}] ${message}`);
+}
+
+function normalizeBackendErrorMessage(message) {
+    const raw = String(message || '');
+    const lower = raw.toLowerCase();
+    if (
+        lower.includes('track is not cached yet and source search failed') &&
+        lower.includes('save to channel for everyone')
+    ) {
+        return 'Track is not cached yet and auto-download failed from source. Please try again later.';
+    }
+    return raw;
 }
 
 document.getElementById('downloadModal').addEventListener('click', (e) => {

@@ -2210,7 +2210,7 @@ def prepare_stream():
         err = result.get('error') or 'Failed to prepare stream'
         err_l = str(err).lower()
         if 'search candidates exhausted' in err_l:
-            err = 'Track is not cached yet and source search failed. Please run "Save to channel for everyone" again to continue caching this playlist.'
+            err = 'Track is not cached yet and source search failed. Please try again later or cache this track first.'
         elif 'quota exceeded' in err_l or '403' in err_l:
             err = 'Source temporarily unavailable (quota/403). Try again later or continue caching playlist to fill Telegram cache.'
         # Источник может быть недоступен (quota/cookies/YouTube restrictions) — отдаем 503 как временную проблему.

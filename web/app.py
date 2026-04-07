@@ -223,6 +223,8 @@ telegram_storage = None
 backup_service = None
 _async_runtime_loop = None
 _async_runtime_thread = None
+playlist_cache_jobs = {}
+playlist_cache_jobs_lock = threading.Lock()
 
 
 class RequestIdFilter(logging.Filter):
@@ -257,6 +259,19 @@ def run_async(coro):
     loop = _ensure_async_runtime()
     future = asyncio.run_coroutine_threadsafe(coro, loop)
     return future.result()
+
+
+def _set_playlist_cache_job(job_id: str, **fields):
+    with playlist_cache_jobs_lock:
+        job = playlist_cache_jobs.get(job_id) or {}
+        job.update(fields)
+        playlist_cache_jobs[job_id] = job
+        return job
+
+
+def _get_playlist_cache_job(job_id: str):
+    with playlist_cache_jobs_lock:
+        return dict(playlist_cache_jobs.get(job_id) or {})
 
 def get_telegram_storage():
     """Ленивая инициализация Telegram Storage Service"""
@@ -1725,6 +1740,183 @@ def ensure_track_cached(loop, track_id: str, artist: str, track_name: str, image
     return {'success': True, 'cached': False, 'file_id': file_id, 'stream_url': file_url}
 
 
+def _run_playlist_cache_job(job_id: str, user_id: int, spotify_id: str, requested_limit: int):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        _set_playlist_cache_job(job_id, status='running', progress_percent=1, message='Loading playlist...')
+
+        limit = max(1, min(int(requested_limit or 50), 100))
+        url = f"https://open.spotify.com/playlist/{spotify_id}"
+        info = loop.run_until_complete(spotify_service.get_playlist_info(url))
+        if not info or not info.get('tracks'):
+            _set_playlist_cache_job(job_id, status='failed', error='Playlist not found or empty', progress_percent=100)
+            return
+
+        all_tracks = info.get('tracks') or []
+        playlist_name = info.get('name') or 'Playlist'
+        playlist_owner = info.get('owner') or ''
+        total_tracks = len(all_tracks)
+
+        existing_public = loop.run_until_complete(db.get_public_spotify_playlist(spotify_id))
+        start_from = 0
+        if existing_public and existing_public.cached_tracks_count:
+            start_from = max(0, min(int(existing_public.cached_tracks_count), total_tracks))
+
+        end_index = min(start_from + limit, total_tracks)
+        tracks = all_tracks[start_from:end_index]
+
+        loop.run_until_complete(db.save_user_spotify_playlist(
+            user_id=user_id,
+            spotify_id=spotify_id,
+            name=playlist_name,
+            owner=playlist_owner,
+            spotify_url=url,
+            total_tracks=total_tracks,
+        ))
+        loop.run_until_complete(db.save_public_spotify_playlist(
+            spotify_id=spotify_id,
+            name=playlist_name,
+            owner=playlist_owner,
+            spotify_url=url,
+            total_tracks=total_tracks,
+            added_by_user_id=user_id,
+        ))
+
+        cached_count = 0
+        uploaded_count = 0
+        failed_count = 0
+        failed_tracks = []
+        current_checkpoint = start_from
+
+        _set_playlist_cache_job(
+            job_id,
+            status='running',
+            progress_percent=2,
+            message=f'Processing {len(tracks)} tracks...',
+            total_tracks=total_tracks,
+            resume_from=start_from,
+            processed=0
+        )
+
+        for idx, t in enumerate(tracks):
+            tid = (t.get('id') or '').strip()
+            artist = (t.get('artist') or '').strip()
+            name = (t.get('name') or '').strip()
+            if not tid:
+                tid = hashlib.md5(f"{artist}_{name}".lower().encode()).hexdigest()[:16]
+
+            if not name or not artist:
+                failed_count += 1
+                if len(failed_tracks) < 5:
+                    failed_tracks.append({'name': name or 'Unknown', 'artist': artist or 'Unknown', 'error': 'Invalid track data'})
+            else:
+                result = ensure_track_cached(loop, tid, artist, name, t.get('image'))
+                if result.get('success'):
+                    if result.get('cached'):
+                        cached_count += 1
+                    else:
+                        uploaded_count += 1
+                    current_checkpoint += 1
+                else:
+                    failed_count += 1
+                    if len(failed_tracks) < 5:
+                        failed_tracks.append({'name': name, 'artist': artist, 'error': result.get('error', 'Unknown error')})
+
+            processed = idx + 1
+            progress = int((processed / max(1, len(tracks))) * 100)
+            _set_playlist_cache_job(
+                job_id,
+                status='running',
+                progress_percent=progress,
+                message=f'Caching {processed}/{len(tracks)}',
+                processed=processed,
+                current_track=f'{artist} - {name}'
+            )
+
+        try:
+            backup_svc = get_backup_service()
+            loop.run_until_complete(backup_svc.backup_to_telegram())
+        except Exception as backup_e:
+            print(f"⚠️ Playlist cache backup failed: {backup_e}")
+
+        loop.run_until_complete(db.save_public_spotify_playlist(
+            spotify_id=spotify_id,
+            name=playlist_name,
+            owner=playlist_owner,
+            spotify_url=url,
+            total_tracks=total_tracks,
+            added_by_user_id=user_id,
+            is_cached_public=True,
+            cached_tracks_count=current_checkpoint,
+            cached_at=datetime.utcnow(),
+        ))
+
+        _set_playlist_cache_job(
+            job_id,
+            status='completed',
+            progress_percent=100,
+            message='Completed',
+            playlist={
+                'spotify_id': spotify_id,
+                'name': playlist_name,
+                'owner': playlist_owner,
+                'total_tracks': total_tracks,
+                'processed_tracks': len(tracks),
+                'start_from': start_from,
+                'end_at': current_checkpoint
+            },
+            cache_result={
+                'already_cached': cached_count,
+                'uploaded_new': uploaded_count,
+                'failed': failed_count,
+                'failed_examples': failed_tracks,
+                'resume_from': start_from,
+                'next_index': current_checkpoint,
+                'completed': current_checkpoint >= total_tracks
+            }
+        )
+    except Exception as e:
+        print(f"❌ Playlist cache job error: {e}")
+        _set_playlist_cache_job(job_id, status='failed', error=str(e), progress_percent=100, message='Failed')
+    finally:
+        loop.close()
+
+
+@app.route('/api/spotify-playlists/<string:spotify_id>/cache/start', methods=['POST'])
+@require_auth
+@rate_limit(SYNC_LIMIT, SYNC_PERIOD)
+def start_cache_spotify_playlist_job(spotify_id: str):
+    try:
+        user_id = getattr(g, 'current_user_id', None)
+        if not user_id:
+            return jsonify({'error': 'Unauthorized'}), 401
+
+        data = request.json or {}
+        requested_limit = data.get('limit', 50)
+        job_id = str(uuid.uuid4())
+        _set_playlist_cache_job(job_id, status='queued', progress_percent=0, message='Queued...')
+
+        thread = threading.Thread(
+            target=_run_playlist_cache_job,
+            args=(job_id, int(user_id), spotify_id, requested_limit),
+            daemon=True
+        )
+        thread.start()
+        return jsonify({'success': True, 'job_id': job_id})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/spotify-playlists/cache-jobs/<string:job_id>', methods=['GET'])
+@require_auth
+def get_cache_spotify_playlist_job(job_id: str):
+    job = _get_playlist_cache_job(job_id)
+    if not job:
+        return jsonify({'error': 'Job not found'}), 404
+    return jsonify({'success': True, 'job': job})
+
+
 @app.route('/api/spotify-playlists/<string:spotify_id>/cache', methods=['POST'])
 @require_auth
 @rate_limit(SYNC_LIMIT, SYNC_PERIOD)
@@ -1752,7 +1944,15 @@ def cache_spotify_playlist(spotify_id: str):
             loop.close()
             return jsonify({'error': 'Playlist not found or empty'}), 404
 
-        tracks = (info.get('tracks') or [])[:limit]
+        all_tracks = info.get('tracks') or []
+        existing_public = loop.run_until_complete(db.get_public_spotify_playlist(spotify_id))
+        start_from = 0
+        if existing_public and existing_public.cached_tracks_count:
+            # Resume from last successful checkpoint (contiguous progress).
+            start_from = max(0, min(int(existing_public.cached_tracks_count), len(all_tracks)))
+
+        end_index = min(start_from + limit, len(all_tracks))
+        tracks = all_tracks[start_from:end_index]
         playlist_name = info.get('name') or 'Playlist'
         playlist_owner = info.get('owner') or ''
 
@@ -1780,6 +1980,7 @@ def cache_spotify_playlist(spotify_id: str):
         failed_count = 0
         failed_tracks = []
 
+        current_checkpoint = start_from
         for t in tracks:
             tid = (t.get('id') or '').strip()
             artist = (t.get('artist') or '').strip()
@@ -1799,6 +2000,7 @@ def cache_spotify_playlist(spotify_id: str):
                     cached_count += 1
                 else:
                     uploaded_count += 1
+                current_checkpoint += 1
             else:
                 failed_count += 1
                 if len(failed_tracks) < 5:
@@ -1820,7 +2022,7 @@ def cache_spotify_playlist(spotify_id: str):
             total_tracks=len(info.get('tracks') or []),
             added_by_user_id=user_id,
             is_cached_public=True,
-            cached_tracks_count=(cached_count + uploaded_count),
+            cached_tracks_count=current_checkpoint,
             cached_at=datetime.utcnow(),
         ))
 
@@ -1832,13 +2034,18 @@ def cache_spotify_playlist(spotify_id: str):
                 'name': playlist_name,
                 'owner': playlist_owner,
                 'total_tracks': len(info.get('tracks') or []),
-                'processed_tracks': len(tracks)
+                'processed_tracks': len(tracks),
+                'start_from': start_from,
+                'end_at': current_checkpoint
             },
             'cache_result': {
                 'already_cached': cached_count,
                 'uploaded_new': uploaded_count,
                 'failed': failed_count,
-                'failed_examples': failed_tracks
+                'failed_examples': failed_tracks,
+                'resume_from': start_from,
+                'next_index': current_checkpoint,
+                'completed': current_checkpoint >= len(all_tracks)
             }
         })
     except Exception as e:

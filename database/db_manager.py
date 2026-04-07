@@ -499,6 +499,14 @@ class DatabaseManager:
             )
             return list(result.scalars().all())
 
+    async def get_public_spotify_playlist(self, spotify_id: str) -> Optional[PublicSpotifyPlaylist]:
+        """Получить публичный Spotify-плейлист по ID."""
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(PublicSpotifyPlaylist).where(PublicSpotifyPlaylist.spotify_id == spotify_id)
+            )
+            return result.scalar_one_or_none()
+
     async def get_public_cached_spotify_playlists(self, limit: int = 30) -> List[PublicSpotifyPlaylist]:
         """Получить публичные плейлисты, прогретые в Telegram Storage."""
         async with self.async_session() as session:

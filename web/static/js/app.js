@@ -957,8 +957,11 @@ function renderSpotifyPlaylistCard(pl) {
                 <button class="playlist-icon-btn" onclick="event.stopPropagation(); playlistDownload('${id}', '${escapeQuotes(name)}')">
                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2z"/></svg>
                 </button>
-                ${userData ? `<button class="playlist-icon-btn" onclick="event.stopPropagation(); playlistAddToMy('${id}', '${escapeQuotes(name)}')">
+                ${userData ? `<button class="playlist-icon-btn" title="Save to my playlists" onclick="event.stopPropagation(); playlistSaveToMy('${id}', '${escapeQuotes(name)}', '${escapeQuotes(owner)}', '${escapeQuotes(pl.spotify_url || '')}', ${total != null ? total : 'null'})">
                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                </button>
+                <button class="playlist-icon-btn" title="Save to channel for everyone" onclick="event.stopPropagation(); playlistSaveToChannelPublic('${id}', '${escapeQuotes(name)}')">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14a1 1 0 0 0 1-1v-3h-2v2H6v-2H4v3a1 1 0 0 0 1 1zm7-3 5-6h-3V4h-4v7H7l5 6z"/></svg>
                 </button>` : ''}
             </div>
         </div>
@@ -1003,44 +1006,120 @@ async function playlistPlay(spotifyId, name) {
     }
 }
 
-async function playlistAddToMy(spotifyId, name) {
+async function playlistSaveToMy(spotifyId, name, owner = '', spotifyUrl = '', totalTracks = null) {
     if (!userData) {
         showNotification('Please login first', 'info');
         return;
     }
     try {
-        setGlobalLoading(`Caching playlist "${name}"...`, 8);
-        showNotification(`Adding "${name}" and caching playlist tracks...`, 'info');
-        const resp = await fetch(`/api/spotify-playlists/${spotifyId}/cache`, {
+        setGlobalLoading(`Saving "${name}" to your playlists...`, 20);
+        const resp = await fetch('/api/my-spotify-playlists', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                spotify_id: spotifyId,
+                name,
+                owner: owner || undefined,
+                spotify_url: spotifyUrl || undefined,
+                total_tracks: Number.isFinite(totalTracks) ? totalTracks : undefined
+            })
+        });
+        updateGlobalLoading('Finalizing...', 90);
+        const data = await resp.json();
+        if (!resp.ok) {
+            showNotification(data.error || 'Failed to save playlist', 'error');
+            return;
+        }
+        showNotification('Playlist saved to your list', 'success');
+        // Обновляем секцию «My Spotify Playlists», если пользователь на вкладке Playlists
+        if (document.querySelector('[data-page="playlists"]')?.classList.contains('active')) {
+            loadPlaylists();
+        }
+        updateGlobalLoading('Done', 100);
+    } catch (e) {
+        console.error('playlistSaveToMy error:', e);
+        showNotification('Failed to save playlist', 'error');
+    } finally {
+        setTimeout(hideGlobalLoading, 250);
+    }
+}
+
+async function playlistSaveToChannelPublic(spotifyId, name) {
+    if (!userData) {
+        showNotification('Please login first', 'info');
+        return;
+    }
+    try {
+        setGlobalLoading(`Saving "${name}" to channel...`, 0);
+        showNotification(`Adding "${name}" to channel for everyone...`, 'info');
+        const startResp = await fetch(`/api/spotify-playlists/${spotifyId}/cache/start`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
             body: JSON.stringify({ name, limit: 50 })
         });
-        updateGlobalLoading('Finalizing cached playlist...', 88);
-        const data = await resp.json();
-        if (!resp.ok) {
-            showNotification(data.error || 'Failed to add and cache playlist', 'error');
+        const startData = await startResp.json();
+        if (!startResp.ok || !startData?.job_id) {
+            showNotification(startData?.error || 'Failed to start playlist save', 'error');
+            return;
+        }
+        const jobId = startData.job_id;
+
+        let data = null;
+        for (let i = 0; i < 600; i++) {
+            await new Promise((r) => setTimeout(r, 1000));
+            const statusResp = await fetch(`/api/spotify-playlists/cache-jobs/${jobId}`, {
+                credentials: 'same-origin'
+            });
+            const statusData = await statusResp.json();
+            if (!statusResp.ok) {
+                showNotification(statusData?.error || 'Failed to get progress', 'error');
+                return;
+            }
+
+            const job = statusData?.job || {};
+            const pct = Number.isFinite(job.progress_percent) ? job.progress_percent : 0;
+            updateGlobalLoading(job.message || 'Processing...', pct);
+            data = {
+                playlist: job.playlist,
+                cache_result: job.cache_result,
+                status: job.status,
+                error: job.error
+            };
+            if (job.status === 'completed') break;
+            if (job.status === 'failed') {
+                showNotification(job.error || 'Failed to save playlist to channel', 'error');
+                return;
+            }
+        }
+
+        if (!data || data.status !== 'completed') {
+            showNotification('Operation timed out', 'error');
             return;
         }
 
         const uploaded = data?.cache_result?.uploaded_new || 0;
         const alreadyCached = data?.cache_result?.already_cached || 0;
         const failed = data?.cache_result?.failed || 0;
+        const nextIndex = data?.cache_result?.next_index ?? 0;
+        const total = data?.playlist?.total_tracks ?? 0;
+        const completed = !!data?.cache_result?.completed;
         showNotification(
-            `Playlist cached: new ${uploaded}, already ${alreadyCached}, failed ${failed}`,
+            completed
+                ? `Saved to channel: new ${uploaded}, already ${alreadyCached}, failed ${failed}. Completed ${nextIndex}/${total}`
+                : `Saved to channel: new ${uploaded}, already ${alreadyCached}, failed ${failed}. Next from ${nextIndex}/${total}`,
             failed > 0 ? 'info' : 'success'
         );
 
-        // Обновляем секцию «My Spotify Playlists», если пользователь на вкладке Playlists
         if (document.querySelector('[data-page="playlists"]')?.classList.contains('active')) {
             loadPlaylists();
         }
         loadHomeCachedPlaylists();
         updateGlobalLoading('Done', 100);
     } catch (e) {
-        console.error('playlistAddToMy error:', e);
-        showNotification('Failed to add and cache playlist', 'error');
+        console.error('playlistSaveToChannelPublic error:', e);
+        showNotification('Failed to save playlist to channel', 'error');
     } finally {
         setTimeout(hideGlobalLoading, 250);
     }
@@ -1066,8 +1145,14 @@ async function playlistDownload(spotifyId, name) {
             return;
         }
 
-        // Последовательная загрузка каждого трека, как в startDownload
-        for (let i = 0; i < tracks.length; i++) {
+        const checkpointKey = `playlist_download_checkpoint_${spotifyId}`;
+        const savedRaw = localStorage.getItem(checkpointKey);
+        let startIndex = Number.parseInt(savedRaw || '0', 10);
+        if (!Number.isFinite(startIndex) || startIndex < 0) startIndex = 0;
+        if (startIndex > tracks.length) startIndex = tracks.length;
+
+        // Последовательная загрузка каждого трека, с возобновлением от checkpoint
+        for (let i = startIndex; i < tracks.length; i++) {
             const t = tracks[i];
             const base = (i / tracks.length) * 100;
             updateGlobalLoading(`Downloading ${i + 1}/${tracks.length}: ${t.artist} - ${t.name}`, base);
@@ -1103,10 +1188,12 @@ async function playlistDownload(spotifyId, name) {
                 a.click();
                 window.URL.revokeObjectURL(url);
                 document.body.removeChild(a);
+                localStorage.setItem(checkpointKey, String(i + 1));
             } catch (e) {
                 console.error('Playlist track download error:', e);
             }
         }
+        localStorage.removeItem(checkpointKey);
         showNotification(`Playlist "${name}" downloaded (first ${tracks.length} tracks).`, 'success');
         updateGlobalLoading('Done', 100);
     } catch (e) {

@@ -1329,6 +1329,61 @@ def get_me():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/my-spotify-playlists', methods=['GET', 'POST'])
+@require_auth
+def my_spotify_playlists():
+    """Личные сохранённые Spotify-плейлисты пользователя (web)."""
+    try:
+        user_id = getattr(g, 'current_user_id', None)
+        if not user_id:
+            return jsonify({'error': 'Unauthorized'}), 401
+
+        if request.method == 'GET':
+            items = run_async(db.get_user_spotify_playlists(user_id))
+            playlists = []
+            for p in items:
+                playlists.append({
+                    'spotify_id': p.spotify_id,
+                    'name': p.name,
+                    'owner': p.owner,
+                    'spotify_url': p.spotify_url,
+                    'total_tracks': p.total_tracks,
+                })
+            return jsonify({'playlists': playlists})
+
+        data = request.json or {}
+        spotify_id = (data.get('spotify_id') or '').strip()
+        name = (data.get('name') or '').strip() or 'Playlist'
+        owner = (data.get('owner') or '').strip() or None
+        spotify_url = (data.get('spotify_url') or '').strip() or None
+        total_tracks = data.get('total_tracks')
+
+        if not spotify_id:
+            return jsonify({'error': 'spotify_id is required'}), 400
+
+        pl = run_async(db.save_user_spotify_playlist(
+            user_id=user_id,
+            spotify_id=spotify_id,
+            name=name,
+            owner=owner,
+            spotify_url=spotify_url,
+            total_tracks=total_tracks,
+        ))
+        return jsonify({
+            'success': True,
+            'playlist': {
+                'spotify_id': pl.spotify_id,
+                'name': pl.name,
+                'owner': pl.owner,
+                'spotify_url': pl.spotify_url,
+                'total_tracks': pl.total_tracks,
+            }
+        })
+    except Exception as e:
+        print(f"❌ my_spotify_playlists error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/admin/api/audit-logs', methods=['GET'])
 @require_auth
 @require_admin

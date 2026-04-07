@@ -831,14 +831,25 @@ function renderSpotifyPlaylistCard(pl) {
     const caption = owner ? `${owner}${total != null ? ` • ${total} tracks` : ''}` : (total != null ? `${total} tracks` : '');
 
     return `
-        <div class="playlist-card spotify-playlist-card" onclick="openSpotifyPlaylist('${id}', '${escapeQuotes(name)}')">
-            <div class="playlist-cover" style="width: -webkit-fill-available;">
-                ${img ? `<img loading="lazy" decoding="async" src="${img}" style="width: -webkit-fill-available;" alt="${escapeHtml(name)}" />`
+        <div class="playlist-card spotify-playlist-card">
+            <div class="playlist-cover">
+                ${img ? `<img loading="lazy" decoding="async" src="${img}" alt="${escapeHtml(name)}" />`
             : `<div class="playlist-placeholder-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 19h2V6H5v2h4v11zm4-11v11h2v-4h4v-2h-4V8h4V6h-4c-1.1 0-2 .9-2 2z"/></svg></div>`}
             </div>
             <div class="playlist-meta">
                 <div class="playlist-name" title="${escapeHtml(name)}">${escapeHtml(name)}</div>
                 <div class="playlist-caption" title="${escapeHtml(caption)}">${escapeHtml(caption)}</div>
+            </div>
+            <div class="playlist-actions-row">
+                <button class="action-btn play-track-btn" onclick="playlistPlay('${id}', '${escapeQuotes(name)}')">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                </button>
+                <button class="action-btn secondary" onclick="playlistDownload('${id}', '${escapeQuotes(name)}')">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2z"/></svg>
+                </button>
+                ${userData ? `<button class="action-btn secondary" onclick="playlistAddToMy('${id}', '${escapeQuotes(name)}')">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                </button>` : ''}
             </div>
         </div>
     `;
@@ -855,6 +866,70 @@ function escapeHtml(str) {
 
 function escapeQuotes(str) {
     return String(str || '').replace(/'/g, "\\'");
+}
+
+async function playlistPlay(spotifyId, name) {
+    try {
+        const resp = await fetch(`/api/spotify-playlists/${spotifyId}/tracks`);
+        const data = await resp.json();
+        if (!resp.ok) {
+            showNotification(data.error || 'Failed to load playlist', 'error');
+            return;
+        }
+        const tracks = data.tracks || [];
+        if (!tracks.length) {
+            showNotification('Playlist is empty', 'info');
+            return;
+        }
+        currentPlaylist = tracks;
+        currentTrackIndex = 0;
+        updateQueueStatus();
+        const first = tracks[0];
+        playTrack(null, first);
+        showNotification(`Playing playlist "${name}"`, 'success');
+    } catch (e) {
+        console.error('playlistPlay error:', e);
+        showNotification('Failed to play playlist', 'error');
+    }
+}
+
+async function playlistAddToMy(spotifyId, name) {
+    if (!userData) {
+        showNotification('Please login first', 'info');
+        return;
+    }
+    try {
+        const resp = await fetch('/api/my-spotify-playlists', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ spotify_id: spotifyId, name })
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            showNotification(data.error || 'Failed to save playlist', 'error');
+            return;
+        }
+        showNotification('Playlist saved to your account', 'success');
+        // Обновляем секцию «My Spotify Playlists», если пользователь на вкладке Playlists
+        if (document.querySelector('[data-page="playlists"]')?.classList.contains('active')) {
+            loadPlaylists();
+        }
+    } catch (e) {
+        console.error('playlistAddToMy error:', e);
+        showNotification('Failed to save playlist', 'error');
+    }
+}
+
+async function playlistDownload(spotifyId, name) {
+    if (!userData) {
+        showNotification('Please login first', 'info');
+        return;
+    }
+    // Пока используем простой UX: открываем плейлист и пользователь скачивает нужные треки.
+    // Расширенный batch-download будет реализован в задаче web-download-jobs.
+    await openSpotifyPlaylist(spotifyId, name);
+    showNotification('Playlist opened. Use per-track Download buttons.', 'info');
 }
 
 function renderTrackCard(track, index, type = 'search') {

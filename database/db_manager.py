@@ -1270,7 +1270,8 @@ class DatabaseManager:
                 best_score = score
                 best = c
 
-        if best and best_score >= 0.72:
+        # Порог чуть ниже: помогает матчить треки с "feat./remix/live" вариациями.
+        if best and best_score >= 0.58:
             return best
         return None
 

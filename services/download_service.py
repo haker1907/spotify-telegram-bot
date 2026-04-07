@@ -216,28 +216,36 @@ class DownloadService:
         out_tmpl = os.path.join(self.download_dir, f"{safe_name}_{quality}.%(ext)s")
         
         return {
-    'format': 'bestaudio/best',
-    'outtmpl': out_tmpl,
-    'overwrites': True,
-    'postprocessors': [{
-        'key': 'FFmpegExtractAudio',
-        'preferredcodec': file_format,
-        'preferredquality': quality if file_format == 'mp3' else None,
-    }],
-    'postprocessor_args': {'ffmpeg': ffmpeg_args} if ffmpeg_args else {},
-    'quiet': True,
-    'no_warnings': True,
-    'extract_flat': False,
-    'default_search': 'ytsearch1',
-    'extractor_args': {
-        'youtube': {
-            'skip': ['translated_subs'],
+            'format': 'bestaudio/best',
+            'outtmpl': out_tmpl,
+            'overwrites': True,
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': file_format,
+                'preferredquality': quality if file_format == 'mp3' else None,
+            }],
+            'postprocessor_args': {'ffmpeg': ffmpeg_args} if ffmpeg_args else {},
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': False,
+            'default_search': 'ytsearch1',
+            'extractor_args': {
+                'youtube': {
+                    'skip': ['translated_subs'],
+                }
+            },
+            # Базовые заголовки браузера помогают уменьшить bot-check на стороне YouTube.
+            'http_headers': {
+                'User-Agent': (
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                    '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+                ),
+                'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8',
+            },
+            'socket_timeout': 60,
+            'retries': 10,
+            **self._get_cookie_auth_options(prefer_browser=True),
         }
-    },
-    'socket_timeout': 60,
-    'retries': 10,
-    **self._get_cookie_auth_options(prefer_browser=True),
-}
 
     async def download_from_url(self, youtube_url: str, quality: str = '192', file_format: str = 'mp3', artist: str = "Unknown", track_name: str = "Track") -> Optional[Dict]:
         """
@@ -272,28 +280,23 @@ class DownloadService:
         else:
             # Попытка 1: Стандартные клиенты yt-dlp (Без переопределения)
             # yt-dlp сам знает, какие клиенты работают лучше всего для избегания ошибок PO Token
-            attempt_opts = copy.deepcopy(ydl_opts)
-            attempt_opts['extractor_args']['youtube']['player_client'] = ['default']
-            result = await loop.run_in_executor(None, self._download_sync, download_target, attempt_opts, file_format)
+            result = None
+            player_client_attempts = [
+                ['default'],
+                ['web_music', 'mweb'],
+                ['web_embedded'],
+                ['web'],
+                ['android'],
+                ['ios'],
+                ['tv_embedded'],
+            ]
+            for player_client in player_client_attempts:
+                attempt_opts = copy.deepcopy(ydl_opts)
+                attempt_opts['extractor_args']['youtube']['player_client'] = player_client
+                result = await loop.run_in_executor(None, self._download_sync, download_target, attempt_opts, file_format)
+                if not self._is_blocked(result):
+                    break
 
-            if self._is_blocked(result):
-            # Attempt 2
-                attempt_opts = copy.deepcopy(ydl_opts)
-                attempt_opts['extractor_args']['youtube']['player_client'] = ['web_music', 'mweb']
-                result = await loop.run_in_executor(None, self._download_sync, download_target, attempt_opts, file_format)
-
-            if self._is_blocked(result):
-                # Attempt 3
-                attempt_opts = copy.deepcopy(ydl_opts)
-                attempt_opts['extractor_args']['youtube']['player_client'] = ['web_embedded']
-                result = await loop.run_in_executor(None, self._download_sync, download_target, attempt_opts, file_format)
-    
-            if self._is_blocked(result):
-                # Attempt 4
-                attempt_opts = copy.deepcopy(ydl_opts)
-                attempt_opts['extractor_args']['youtube']['player_client'] = ['web']
-                result = await loop.run_in_executor(None, self._download_sync, download_target, attempt_opts, file_format)
-    
             if self._is_blocked(result):
                 # No cookies
                 attempt_opts = copy.deepcopy(ydl_opts)
@@ -375,7 +378,7 @@ class DownloadService:
         for candidate_url in candidate_urls:
             # На каждом candidate URL пробуем несколько client-профилей.
             # Это увеличивает шанс получить доступный аудиопоток без PO token.
-            for player_client in (['default'], ['web'], ['web_embedded']):
+            for player_client in (['default'], ['web'], ['web_embedded'], ['android'], ['ios']):
                 attempt_opts = copy.deepcopy(ydl_opts)
                 attempt_opts['default_search'] = None
                 attempt_opts['extractor_args']['youtube']['player_client'] = player_client

@@ -223,6 +223,21 @@ def get_spotify_playlist_search_keyboard(playlists: list, lang: str = "ru") -> I
     return InlineKeyboardMarkup(keyboard)
 
 
+def get_single_spotify_playlist_keyboard(playlist: dict, lang: str = "ru") -> InlineKeyboardMarkup:
+    """Клавиатура для одиночной ссылки на плейлист: одна кнопка открыть плейлист."""
+    pl_id = playlist.get("id") or ""
+    name = (playlist.get("name") or "Playlist").replace("\n", " ").strip()
+    owner = (playlist.get("owner") or "").replace("\n", " ").strip()
+    ntot = playlist.get("total_tracks")
+    extra = f" · {ntot}" if isinstance(ntot, int) else ""
+    if owner:
+        label = f"📀 {name} — {owner}{extra}"
+    else:
+        label = f"📀 {name}{extra}"
+    label = label[:64]
+    return InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data=f"spl_{pl_id}")]])
+
+
 def get_playlist_tracks_browse_keyboard(
     tracks: list,
     collection_type: str,

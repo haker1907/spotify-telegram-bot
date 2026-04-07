@@ -16,6 +16,7 @@ from utils.keyboards import (
     get_track_actions_keyboard,
     get_collection_keyboard,
     get_spotify_playlist_search_keyboard,
+    get_single_spotify_playlist_keyboard,
 )
 
 
@@ -83,8 +84,41 @@ async def handle_spotify_link(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return
     
-    # Обработка коллекций (album, playlist, artist)
-    if parsed['type'] in ['album', 'playlist', 'artist']:
+    # Специальный UX для ссылки на плейлист:
+    # сначала показываем только сам найденный плейлист, а треки - после клика.
+    if parsed['type'] == 'playlist':
+        status_msg = await update.message.reply_text(get_string("searching", lang))
+        try:
+            info = await spotify_service.get_playlist_info(message_text)
+            if not info:
+                await status_msg.edit_text("❌ Не удалось получить информацию о плейлисте")
+                return
+
+            playlist_item = {
+                "id": parsed["id"],
+                "name": info.get("name") or "Playlist",
+                "owner": info.get("owner", ""),
+                "total_tracks": len(info.get("tracks", [])),
+            }
+            safe_name = html.escape(str(playlist_item["name"]))
+            message = f"📀 <b>{safe_name}</b>\n"
+            if playlist_item["owner"]:
+                message += f"👤 {html.escape(str(playlist_item['owner']))}\n"
+            message += f"🔢 {'Треков' if lang == 'ru' else 'Tracks'}: {playlist_item['total_tracks']}\n\n"
+            message += (
+                "Нажмите на плейлист, чтобы открыть страницу со всеми треками:"
+                if lang == "ru"
+                else "Tap the playlist to open page with all tracks:"
+            )
+            keyboard = get_single_spotify_playlist_keyboard(playlist_item, lang=lang)
+            await status_msg.edit_text(message, reply_markup=keyboard, parse_mode='HTML')
+            return
+        except Exception as e:
+            await status_msg.edit_text(f"❌ Ошибка при обработке плейлиста: {str(e)}")
+            return
+
+    # Обработка коллекций (album, artist)
+    if parsed['type'] in ['album', 'artist']:
         status_msg = await update.message.reply_text(get_string("searching", lang))
         try:
             if parsed['type'] == 'album':

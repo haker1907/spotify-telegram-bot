@@ -52,6 +52,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif callback_data.startswith("splp_"):
         await browse_spotify_playlist_page(query, context, callback_data, lang)
+    elif callback_data.startswith("splplay_"):
+        await play_spotify_playlist_first_track(query, context, callback_data, lang)
+    elif callback_data.startswith("spldl_"):
+        await download_spotify_playlist_batch(query, context, callback_data, lang)
     elif callback_data.startswith("spl_"):
         await open_spotify_playlist_from_search(query, context, callback_data, lang)
     elif callback_data == "show_spotify_track_search":
@@ -830,6 +834,44 @@ async def show_spotify_track_search_fallback(query, context, lang="ru"):
         await query.message.edit_text(
             f"❌ {'Ошибка поиска' if lang == 'ru' else 'Search error'}: {e}"
         )
+
+
+async def play_spotify_playlist_first_track(query, context, callback_data, lang="ru"):
+    """Кнопка Play на карточке плейлиста: проиграть первый трек и поставить очередь."""
+    pl_id = callback_data.replace("splplay_", "")
+    if not pl_id:
+        return
+    spotify_service = context.bot_data.get("spotify")
+    if not spotify_service:
+        await query.message.reply_text("❌ Spotify service unavailable")
+        return
+    await query.message.reply_text("▶️ Ищу плейлист..." if lang == "ru" else "▶️ Loading playlist...")
+    try:
+        info = await spotify_service.get_playlist_info(f"https://open.spotify.com/playlist/{pl_id}")
+        tracks = (info or {}).get("tracks") or []
+        if not tracks:
+            await query.message.reply_text("❌ Плейлист пуст" if lang == "ru" else "❌ Playlist is empty")
+            return
+        first = tracks[0]
+        track_id = first.get("id")
+        if not track_id:
+            await query.message.reply_text("❌ Не удалось получить первый трек" if lang == "ru" else "❌ Could not get first track")
+            return
+        # Используем уже существующую логику скачивания/отправки
+        await download_track(query, context, f"download_{track_id}", lang)
+    except Exception as e:
+        await query.message.reply_text(f"❌ {'Ошибка' if lang == 'ru' else 'Error'}: {e}")
+
+
+async def download_spotify_playlist_batch(query, context, callback_data, lang="ru"):
+    """Кнопка Download на карточке плейлиста: batch-скачивание с прогрессом."""
+    pl_id = callback_data.replace("spldl_", "")
+    if not pl_id:
+        return
+    # Переиспользуем batch_download_collection с типом playlist
+    parts = ["batchdl", "playlist", pl_id]
+    fake_callback = "_".join(parts)
+    await batch_download_collection(query, context, fake_callback, lang)
 
 
 async def batch_download_collection(query, context, callback_data, lang="ru"):

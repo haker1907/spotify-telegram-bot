@@ -1073,15 +1073,17 @@ body {
 .playlist-card {
     background: var(--spotify-gray);
     padding: 16px;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: background var(--transition-normal);
+    border-radius: 10px;
+    cursor: default;
+    transition: background var(--transition-normal), transform var(--transition-fast), box-shadow var(--transition-fast);
     animation: cardEnter 0.22s ease both;
-    will-change: transform;
+    will-change: transform, box-shadow;
 }
 
 .playlist-card:hover {
     background: #2a2a2a;
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-lg);
 }
 
 .playlist-icon {
@@ -1105,11 +1107,106 @@ body {
 .playlist-name {
     font-weight: 700;
     margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .playlist-count {
     font-size: 12px;
     color: var(--spotify-light-gray);
+}
+
+/* Spotify playlist cards (search results & global/my sections) */
+.spotify-playlist-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 220px;
+}
+
+.spotify-playlist-card .playlist-cover {
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #333;
+    box-shadow: var(--shadow-md);
+}
+
+.spotify-playlist-card .playlist-cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.spotify-playlist-card .playlist-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.spotify-playlist-card .playlist-name {
+    font-weight: 700;
+    font-size: 15px;
+}
+
+.spotify-playlist-card .playlist-caption {
+    font-size: 12px;
+    color: var(--spotify-light-gray);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.playlist-actions-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.playlist-actions-row .action-btn {
+    height: 40px;
+}
+
+.playlist-play-btn {
+    flex: 1;
+    height: 40px;
+    border-radius: 999px;
+    background: var(--spotify-green);
+    border: none;
+    color: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform var(--transition-fast), filter var(--transition-fast);
+}
+
+.playlist-play-btn:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.05);
+}
+
+.playlist-icon-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    border: none;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--spotify-white);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background var(--transition-fast), transform var(--transition-fast);
+}
+
+.playlist-icon-btn:hover {
+    background: rgba(255, 255, 255, 0.16);
+    transform: translateY(-1px);
 }
 
 /* Modals */

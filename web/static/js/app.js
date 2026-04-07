@@ -811,10 +811,17 @@ function displayPlaylistSearchResults(playlists, query) {
     }
 
     const safeQuery = escapeHtml(query);
+    let title = 'Spotify playlists';
+    let subtitle = 'Выберите плейлист, чтобы открыть страницу со всеми треками.';
+    if (query.includes('open.spotify.com/playlist')) {
+        subtitle = 'Плейлист по ссылке из Spotify.';
+    } else if (safeQuery.length <= 40) {
+        title = `Spotify playlists for "${safeQuery}"`;
+    }
     const header = `
         <div class="playlist-results-header">
-            <h2>Spotify playlists for "${safeQuery}"</h2>
-            <p>Выберите плейлист, чтобы открыть страницу со всеми треками.</p>
+            <h2>${title}</h2>
+            <p>${subtitle}</p>
         </div>
     `;
 
@@ -832,8 +839,8 @@ function renderSpotifyPlaylistCard(pl) {
 
     return `
         <div class="playlist-card spotify-playlist-card">
-            <div class="playlist-cover" style="width: -webkit-fill-available;">
-                ${img ? `<img loading="lazy" decoding="async" src="${img}" style="width: -webkit-fill-available;" alt="${escapeHtml(name)}" />`
+            <div class="playlist-cover">
+                ${img ? `<img loading="lazy" decoding="async" src="${img}" alt="${escapeHtml(name)}" />`
             : `<div class="playlist-placeholder-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 19h2V6H5v2h4v11zm4-11v11h2v-4h4v-2h-4V8h4V6h-4c-1.1 0-2 .9-2 2z"/></svg></div>`}
             </div>
             <div class="playlist-meta">
@@ -841,13 +848,13 @@ function renderSpotifyPlaylistCard(pl) {
                 <div class="playlist-caption" title="${escapeHtml(caption)}">${escapeHtml(caption)}</div>
             </div>
             <div class="playlist-actions-row">
-                <button class="action-btn play-track-btn" onclick="playlistPlay('${id}', '${escapeQuotes(name)}')">
+                <button class="playlist-play-btn" onclick="playlistPlay('${id}', '${escapeQuotes(name)}')">
                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
                 </button>
-                <button class="action-btn secondary" onclick="playlistDownload('${id}', '${escapeQuotes(name)}')">
+                <button class="playlist-icon-btn" onclick="playlistDownload('${id}', '${escapeQuotes(name)}')">
                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2z"/></svg>
                 </button>
-                ${userData ? `<button class="action-btn secondary" onclick="playlistAddToMy('${id}', '${escapeQuotes(name)}')">
+                ${userData ? `<button class="playlist-icon-btn" onclick="playlistAddToMy('${id}', '${escapeQuotes(name)}')">
                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
                 </button>` : ''}
             </div>
@@ -926,10 +933,58 @@ async function playlistDownload(spotifyId, name) {
         showNotification('Please login first', 'info');
         return;
     }
-    // Пока используем простой UX: открываем плейлист и пользователь скачивает нужные треки.
-    // Расширенный batch-download будет реализован в задаче web-download-jobs.
-    await openSpotifyPlaylist(spotifyId, name);
-    showNotification('Playlist opened. Use per-track Download buttons.', 'info');
+    try {
+        showNotification(`Preparing download for playlist "${name}"...`, 'info');
+        const resp = await fetch(`/api/spotify-playlists/${spotifyId}/tracks`);
+        const data = await resp.json();
+        if (!resp.ok) {
+            showNotification(data.error || 'Failed to load playlist', 'error');
+            return;
+        }
+        const tracks = (data.tracks || []).slice(0, 50); // safety cap
+        if (!tracks.length) {
+            showNotification('Playlist is empty', 'info');
+            return;
+        }
+
+        // Последовательная загрузка каждого трека, как в startDownload
+        for (let i = 0; i < tracks.length; i++) {
+            const t = tracks[i];
+            showNotification(`Downloading ${i + 1}/${tracks.length}: ${t.artist} — ${t.name}`, 'info');
+            try {
+                const response = await fetch('/api/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({
+                        track_id: t.id || '',
+                        track_name: t.name,
+                        track_artist: t.artist,
+                        quality: '320',
+                        format: 'mp3'
+                    })
+                });
+                if (!response.ok) {
+                    continue;
+                }
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${t.artist} - ${t.name}.mp3`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+            } catch (e) {
+                console.error('Playlist track download error:', e);
+            }
+        }
+        showNotification(`Playlist "${name}" downloaded (first ${tracks.length} tracks).`, 'success');
+    } catch (e) {
+        console.error('playlistDownload error:', e);
+        showNotification('Failed to download playlist', 'error');
+    }
 }
 
 function renderTrackCard(track, index, type = 'search') {
@@ -1406,8 +1461,10 @@ async function loadPlaylists() {
     try {
         const grid = document.getElementById('playlistsGrid');
         const publicGrid = document.getElementById('publicPlaylistsGrid');
+        const mySpotifyGrid = document.getElementById('mySpotifyPlaylistsGrid');
         if (grid) grid.innerHTML = renderPlaylistsSkeletons(6);
         if (publicGrid) publicGrid.innerHTML = renderPlaylistsSkeletons(4);
+        if (mySpotifyGrid) mySpotifyGrid.innerHTML = renderPlaylistsSkeletons(4);
 
         const response = await fetch('/api/playlists', {
             credentials: 'same-origin'
@@ -1422,6 +1479,19 @@ async function loadPlaylists() {
             displayPublicPlaylists(data2.playlists || []);
         } catch (e) {
             console.warn('Load public playlists error:', e);
+        }
+
+        // Личные сохранённые Spotify-плейлисты
+        try {
+            const resp3 = await fetch('/api/my-spotify-playlists', {
+                credentials: 'same-origin'
+            });
+            const data3 = await resp3.json();
+            if (resp3.ok) {
+                displayMySpotifyPlaylists(data3.playlists || []);
+            }
+        } catch (e) {
+            console.warn('Load my Spotify playlists error:', e);
         }
     } catch (error) {
         console.error('Load playlists error:', error);
@@ -1451,6 +1521,16 @@ function displayPublicPlaylists(playlists) {
     if (!grid) return;
     if (!playlists || playlists.length === 0) {
         grid.innerHTML = '<p style="grid-column: 1/-1; text-align: center; color: var(--spotify-light-gray); padding: 32px 0;">No public playlists yet.</p>';
+        return;
+    }
+    grid.innerHTML = playlists.map(pl => renderSpotifyPlaylistCard(pl)).join('');
+}
+
+function displayMySpotifyPlaylists(playlists) {
+    const grid = document.getElementById('mySpotifyPlaylistsGrid');
+    if (!grid) return;
+    if (!playlists || playlists.length === 0) {
+        grid.innerHTML = '<p style="grid-column: 1/-1; text-align: center; color: var(--spotify-light-gray); padding: 32px 0;">You have no saved Spotify playlists yet.</p>';
         return;
     }
     grid.innerHTML = playlists.map(pl => renderSpotifyPlaylistCard(pl)).join('');

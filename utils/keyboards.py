@@ -225,7 +225,7 @@ def get_spotify_playlist_search_keyboard(playlists: list, lang: str = "ru") -> I
 
 
 def get_single_spotify_playlist_keyboard(playlist: dict, lang: str = "ru") -> InlineKeyboardMarkup:
-    """Клавиатура для одиночной ссылки на плейлист: одна кнопка открыть плейлист."""
+    """Клавиатура для одиночной ссылки на плейлист: Play / Download / +."""
     pl_id = playlist.get("id") or ""
     name = (playlist.get("name") or "Playlist").replace("\n", " ").strip()
     owner = (playlist.get("owner") or "").replace("\n", " ").strip()
@@ -236,7 +236,20 @@ def get_single_spotify_playlist_keyboard(playlist: dict, lang: str = "ru") -> In
     else:
         label = f"📀 {name}{extra}"
     label = label[:64]
-    return InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data=f"spl_{pl_id}")]])
+
+    play_text = "▶️ Play" if lang == "en" else "▶️ Играть"
+    dl_text = "⬇️ Download" if lang == "en" else "⬇️ Скачать"
+    save_text = "➕ My playlists" if lang == "en" else "➕ В мои плейлисты"
+
+    keyboard = [
+        [InlineKeyboardButton(label, callback_data=f"spl_{pl_id}")],
+        [
+            InlineKeyboardButton(play_text, callback_data=f"splplay_{pl_id}"),
+            InlineKeyboardButton(dl_text, callback_data=f"spldl_{pl_id}"),
+        ],
+        [InlineKeyboardButton(save_text, callback_data=f"splsave_{pl_id}")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 
 def get_public_spotify_playlists_keyboard(playlists: list, lang: str = "ru") -> InlineKeyboardMarkup:

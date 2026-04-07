@@ -1773,6 +1773,18 @@ def ensure_track_cached(loop, track_id: str, artist: str, track_name: str, image
             'mp3'
         )
     )
+    if (not result or result.get('error')) and artist:
+        # Retry with simplified artist string to improve hit rate on YouTube search.
+        alt_artist = artist.split(',')[0].split('&')[0].strip()
+        if alt_artist and alt_artist.lower() != artist.lower():
+            result = loop.run_until_complete(
+                download_service.search_and_download(
+                    alt_artist,
+                    track_name,
+                    '192',
+                    'mp3'
+                )
+            )
     if not result or result.get('error'):
         return {'success': False, 'error': result.get('error') if result else 'Unknown download error'}
     if not result.get('file_path') or not os.path.exists(result['file_path']):

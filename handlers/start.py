@@ -5,6 +5,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from utils.keyboards import KeyboardBuilder
 from utils.strings import get_string
+import config
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

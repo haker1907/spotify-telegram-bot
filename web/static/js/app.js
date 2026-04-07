@@ -939,6 +939,7 @@ function renderSpotifyPlaylistCard(pl) {
     const owner = pl.owner || '';
     const total = typeof pl.total_tracks === 'number' ? pl.total_tracks : null;
     const img = pl.image || pl.image_url || pl.cover_url || '';
+    const isCachedPublic = !!pl.is_cached_public;
     const caption = owner ? `${owner}${total != null ? ` • ${total} tracks` : ''}` : (total != null ? `${total} tracks` : '');
 
     return `
@@ -958,10 +959,11 @@ function renderSpotifyPlaylistCard(pl) {
                 <button class="playlist-icon-btn" onclick="event.stopPropagation(); playlistDownload('${id}', '${escapeQuotes(name)}')">
                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2z"/></svg>
                 </button>
-                ${userData ? `<button class="playlist-icon-btn" title="Save to my playlists" onclick="event.stopPropagation(); playlistSaveToMy('${id}', '${escapeQuotes(name)}', '${escapeQuotes(owner)}', '${escapeQuotes(pl.spotify_url || '')}', ${total != null ? total : 'null'}, '${escapeQuotes(img)}')">
+                ${userData ? `
+                <button class="playlist-icon-btn" title="Save to my playlists" onclick="event.stopPropagation(); playlistSaveToMy('${id}', '${escapeQuotes(name)}', '${escapeQuotes(owner)}', '${escapeQuotes(pl.spotify_url || '')}', ${total != null ? total : 'null'}, '${escapeQuotes(img)}')">
                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
                 </button>
-                <button class="playlist-icon-btn" title="Save to channel for everyone" onclick="event.stopPropagation(); playlistSaveToChannelPublic('${id}', '${escapeQuotes(name)}')">
+                ${!isCachedPublic ? `<button class="playlist-icon-btn" title="Save to channel for everyone" onclick="event.stopPropagation(); playlistSaveToChannelPublic('${id}', '${escapeQuotes(name)}')">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                         <path d="M4 4h13l3 3v13H4z"/>
                         <path d="M8 4v6h7V4"/>
@@ -969,6 +971,7 @@ function renderSpotifyPlaylistCard(pl) {
                         <path d="M8 17h8"/>
                     </svg>
                 </button>` : ''}
+                ` : ''}
             </div>
         </div>
     `;

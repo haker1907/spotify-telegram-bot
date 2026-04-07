@@ -13,6 +13,7 @@ from collections import defaultdict
 import requests
 import uuid
 import logging
+import mimetypes
 from werkzeug.utils import secure_filename
 
 # Добавляем корневую директорию в путь для импорта модулей
@@ -756,6 +757,26 @@ def upload_track():
         track_id = f"upload_{hashlib.md5(raw_id.encode()).hexdigest()[:16]}"
         preview_url = f"/api/stream-local/{track_id}"
 
+        cover_image_url = None
+        cover_file = request.files.get('cover') or request.files.get('image')
+        if cover_file and cover_file.filename:
+            cname = secure_filename(cover_file.filename)
+            _, cext = os.path.splitext((cname or '').lower())
+            allowed_img = {'.jpg', '.jpeg', '.png', '.webp', '.gif'}
+            if cext not in allowed_img:
+                return jsonify({'error': f'Unsupported cover format: {cext or "unknown"}'}), 400
+            cover_file.stream.seek(0, os.SEEK_END)
+            csize = cover_file.stream.tell()
+            cover_file.stream.seek(0)
+            if csize > 8 * 1024 * 1024:
+                return jsonify({'error': 'Cover image is too large (max 8MB)'}), 400
+            covers_dir = os.path.join(base_dir, 'uploads', 'covers')
+            os.makedirs(covers_dir, exist_ok=True)
+            cover_path = os.path.join(covers_dir, f"{track_id}{cext}")
+            # перезаписываем, если повторная загрузка того же трека
+            cover_file.save(cover_path)
+            cover_image_url = f"/api/local-cover/{track_id}"
+
         track_data = {
             'id': track_id,
             'name': track_name,
@@ -764,7 +785,7 @@ def upload_track():
             'duration_ms': None,
             'preview_url': preview_url,
             'spotify_url': f"local://upload/{track_id}",
-            'image_url': None,
+            'image_url': cover_image_url,
             'popularity': None
         }
 
@@ -779,7 +800,8 @@ def upload_track():
             file_path=file_path,
             file_size=file_size,
             artist=artist,
-            track_name=track_name
+            track_name=track_name,
+            image_url=cover_image_url
         ))
         loop.close()
 
@@ -789,7 +811,7 @@ def upload_track():
                 'id': track_id,
                 'name': track_name,
                 'artist': artist,
-                'image': None,
+                'image': cover_image_url,
                 'preview_url': preview_url,
                 'from_discover': True,
                 'uploaded_at': datetime.utcnow().isoformat()
@@ -821,6 +843,36 @@ def stream_local_track(track_id: str):
     except Exception as e:
         print(f"Stream local error: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+def _local_cover_file_path(base_dir: str, track_id: str) -> str | None:
+    covers_dir = os.path.join(base_dir, 'uploads', 'covers')
+    if not os.path.isdir(covers_dir):
+        return None
+    prefix = f"{track_id}."
+    for name in os.listdir(covers_dir):
+        if name.startswith(prefix):
+            full = os.path.join(covers_dir, name)
+            if os.path.isfile(full):
+                return full
+    return None
+
+
+@app.route('/api/local-cover/<track_id>', methods=['GET'])
+@require_auth
+def local_cover_image(track_id: str):
+    """Отдача обложки локально загруженного трека."""
+    try:
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        path = _local_cover_file_path(base_dir, track_id)
+        if not path:
+            return jsonify({'error': 'Cover not found'}), 404
+        mt, _ = mimetypes.guess_type(path)
+        return send_file(path, mimetype=mt or 'image/jpeg', as_attachment=False, conditional=True)
+    except Exception as e:
+        print(f"Local cover error: {e}")
+        return jsonify({'error': str(e)}), 500
+
 
 def search_by_url(url):
     """Поиск по Spotify URL"""

@@ -1214,6 +1214,7 @@ async function uploadTrack() {
     const fileInput = document.getElementById('uploadTrackFile');
     const nameInput = document.getElementById('uploadTrackName');
     const artistInput = document.getElementById('uploadTrackArtist');
+    const coverInput = document.getElementById('uploadTrackCover');
     const file = fileInput?.files?.[0];
     if (!file) {
         showNotification('Choose audio file first', 'error');
@@ -1224,6 +1225,10 @@ async function uploadTrack() {
     formData.append('file', file);
     formData.append('name', (nameInput?.value || '').trim());
     formData.append('artist', (artistInput?.value || '').trim());
+    const coverFile = coverInput?.files?.[0];
+    if (coverFile) {
+        formData.append('cover', coverFile);
+    }
 
     try {
         showNotification('Uploading track...', 'info');
@@ -1243,6 +1248,7 @@ async function uploadTrack() {
         if (fileInput) fileInput.value = '';
         if (nameInput) nameInput.value = '';
         if (artistInput) artistInput.value = '';
+        if (coverInput) coverInput.value = '';
 
         await loadLibrary();
     } catch (error) {

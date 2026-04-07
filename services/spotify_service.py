@@ -18,6 +18,44 @@ class SpotifyService:
         self.session = requests.Session()
         # Emoji в Windows-консоли (cp1251/cp866) может вызывать UnicodeEncodeError
         print("Spotify сервис инициализирован (oEmbed)")
+
+    @staticmethod
+    def _album_cover_from_track_dict(t: dict) -> Optional[str]:
+        """Безопасно взять URL обложки альбома из объекта трека Web API."""
+        album = t.get('album')
+        if not isinstance(album, dict):
+            return None
+        imgs = album.get('images') or []
+        if not imgs:
+            return None
+        # Spotify отдаёт от меньшего к большему — берём последнюю (крупнее)
+        for img in reversed(imgs):
+            if isinstance(img, dict) and img.get('url'):
+                return img.get('url')
+        return None
+
+    async def _enrich_playlist_track_images_from_embed(self, tracks: list, entity_image: str) -> None:
+        """
+        Для плейлистов: если у всех треков одна и та же картинка (обложка плейлиста) или её нет —
+        подгружаем обложку альбома через embed страницу трека.
+        """
+        if not tracks:
+            return
+        sem = asyncio.Semaphore(8)
+
+        async def one(track: dict):
+            tid = track.get('id')
+            if not tid or str(tid).startswith('idx_'):
+                return
+            cur = (track.get('image') or '').strip()
+            if entity_image and cur and cur != entity_image:
+                return
+            async with sem:
+                img = await self._get_track_image_from_embed(str(tid))
+                if img:
+                    track['image'] = img
+
+        await asyncio.gather(*[one(t) for t in tracks])
     
     @staticmethod
     def parse_spotify_url(url: str) -> Optional[Dict[str, str]]:
@@ -340,7 +378,8 @@ class SpotifyService:
                     while True:
                         current_api_url = api_url
                         if collection_type != 'artist':
-                            current_api_url = f"{api_base}/tracks?offset={offset}&limit={limit}"
+                            # market=US повышает шанс получить полный объект трека с album.images
+                            current_api_url = f"{api_base}/tracks?offset={offset}&limit={limit}&market=US"
                         
                         tracks_resp = await client.get(current_api_url, headers=api_headers)
                         if tracks_resp.status_code != 200:
@@ -357,22 +396,29 @@ class SpotifyService:
                             if not t: continue
                             
                             artists = ", ".join([a.get('name', '') for a in t.get('artists', [])])
-                            t_image = entity_image
-                            if 'album' in t:
-                                imgs = t.get('album', {}).get('images', [])
-                                if imgs: t_image = imgs[0].get('url')
+                            t_image = self._album_cover_from_track_dict(t) or entity_image
+                            album_obj = t.get('album')
+                            album_name = None
+                            if isinstance(album_obj, dict):
+                                album_name = album_obj.get('name')
+                            if album_name is None and collection_type == 'album':
+                                album_name = entity_name
                             
                             tracks.append({
                                 'id': t.get('id'),
                                 'name': t.get('name'),
                                 'artist': artists,
                                 'image': t_image,
-                                'album': t.get('album', {}).get('name') if 'album' in t else entity_name if collection_type == 'album' else None
+                                'album': album_name
                             })
                         
                         if collection_type == 'artist' or len(items) < limit or len(tracks) >= 1000:
                             break
                         offset += limit
+
+                    # Плейлист: Web API иногда отдаёт треки без album.images — все выглядят как обложка плейлиста
+                    if collection_type == 'playlist' and tracks and not use_static_fallback:
+                        await self._enrich_playlist_track_images_from_embed(tracks, entity_image or '')
 
                 # Финальный fallback к статическим данным (если API не сработал на любом этапе)
                 if use_static_fallback or not tracks:
@@ -438,18 +484,15 @@ class SpotifyService:
                             'image': entity_image # Default to artist image initially
                         })
 
-                    # SPECIFIC FIX FOR ARTIST TRACKS:
-                    # Artist "Top Tracks" in static data do NOT contain album art.
-                    # We must fetch it individually from track embeds.
-                    if collection_type == 'artist' and tracks:
-                        print(f"🎨 Fetching missing album art for {len(tracks)} tracks concurrently...")
+                    # Artist / Playlist static data: нет обложек альбомов по трекам — тянем из embed.
+                    if collection_type in ('artist', 'playlist') and tracks:
+                        print(f"Fetching per-track album art for {len(tracks)} tracks (embed)...")
                         async def update_track_image(track):
-                            if track['id'] and not track['id'].startswith('idx_'):
-                                img = await self._get_track_image_from_embed(track['id'])
+                            if track['id'] and not str(track['id']).startswith('idx_'):
+                                img = await self._get_track_image_from_embed(str(track['id']))
                                 if img:
                                     track['image'] = img
 
-                        # Run concurrent requests
                         await asyncio.gather(*[update_track_image(t) for t in tracks])
 
                 return {

@@ -263,6 +263,9 @@ class PublicSpotifyPlaylist(Base):
     spotify_url: Mapped[str] = mapped_column(String(500))
     total_tracks: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     added_by_user_id: Mapped[Optional[int]] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    is_cached_public: Mapped[int] = mapped_column(Integer, default=0)  # 0/1: треки плейлиста прогреты в Telegram Storage
+    cached_tracks_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    cached_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

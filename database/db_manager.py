@@ -128,8 +128,24 @@ class DatabaseManager:
                     except Exception as e:
                         print(f"⚠️ [DB] Could not ensure user_spotify_playlists columns: {e}")
 
+                def ensure_public_spotify_playlists(sync_conn):
+                    try:
+                        cols = [row[1] for row in sync_conn.exec_driver_sql("PRAGMA table_info(public_spotify_playlists)")]
+                        if cols and "is_cached_public" not in cols:
+                            print("⚙️ [DB] Adding missing column public_spotify_playlists.is_cached_public...")
+                            sync_conn.exec_driver_sql("ALTER TABLE public_spotify_playlists ADD COLUMN is_cached_public INTEGER DEFAULT 0")
+                        if cols and "cached_tracks_count" not in cols:
+                            print("⚙️ [DB] Adding missing column public_spotify_playlists.cached_tracks_count...")
+                            sync_conn.exec_driver_sql("ALTER TABLE public_spotify_playlists ADD COLUMN cached_tracks_count INTEGER")
+                        if cols and "cached_at" not in cols:
+                            print("⚙️ [DB] Adding missing column public_spotify_playlists.cached_at...")
+                            sync_conn.exec_driver_sql("ALTER TABLE public_spotify_playlists ADD COLUMN cached_at DATETIME")
+                    except Exception as e:
+                        print(f"⚠️ [DB] Could not ensure public_spotify_playlists columns: {e}")
+
                 await conn.run_sync(ensure_users_columns)
                 await conn.run_sync(ensure_user_spotify_playlists)
+                await conn.run_sync(ensure_public_spotify_playlists)
         print("✅ База данных инициализирована (WAL mode enabled)")
 
     def get_database_file_path(self) -> Optional[str]:
@@ -433,6 +449,9 @@ class DatabaseManager:
         spotify_url: Optional[str] = None,
         total_tracks: Optional[int] = None,
         added_by_user_id: Optional[int] = None,
+        is_cached_public: Optional[bool] = None,
+        cached_tracks_count: Optional[int] = None,
+        cached_at: Optional[datetime] = None,
     ) -> PublicSpotifyPlaylist:
         """Создать или обновить запись публичного Spotify-плейлиста."""
         async with self.async_session() as session:
@@ -448,6 +467,9 @@ class DatabaseManager:
                     spotify_url=spotify_url or f"https://open.spotify.com/playlist/{spotify_id}",
                     total_tracks=total_tracks,
                     added_by_user_id=added_by_user_id,
+                    is_cached_public=1 if is_cached_public else 0,
+                    cached_tracks_count=cached_tracks_count,
+                    cached_at=cached_at,
                 )
                 session.add(pl)
             else:
@@ -457,6 +479,12 @@ class DatabaseManager:
                 pl.total_tracks = total_tracks
                 if added_by_user_id:
                     pl.added_by_user_id = added_by_user_id
+                if is_cached_public is not None:
+                    pl.is_cached_public = 1 if is_cached_public else 0
+                if cached_tracks_count is not None:
+                    pl.cached_tracks_count = cached_tracks_count
+                if cached_at is not None:
+                    pl.cached_at = cached_at
                 pl.updated_at = datetime.utcnow()
             await session.commit()
             return pl
@@ -467,6 +495,17 @@ class DatabaseManager:
             result = await session.execute(
                 select(PublicSpotifyPlaylist)
                 .order_by(PublicSpotifyPlaylist.updated_at.desc())
+                .limit(limit)
+            )
+            return list(result.scalars().all())
+
+    async def get_public_cached_spotify_playlists(self, limit: int = 30) -> List[PublicSpotifyPlaylist]:
+        """Получить публичные плейлисты, прогретые в Telegram Storage."""
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(PublicSpotifyPlaylist)
+                .where(PublicSpotifyPlaylist.is_cached_public == 1)
+                .order_by(PublicSpotifyPlaylist.cached_at.desc(), PublicSpotifyPlaylist.updated_at.desc())
                 .limit(limit)
             )
             return list(result.scalars().all())

@@ -703,7 +703,11 @@ def get_public_playlists():
     try:
         limit = int(request.args.get('limit', 30))
         limit = max(1, min(limit, 100))
-        items = run_async(db.get_public_spotify_playlists(limit=limit))
+        cached_only = str(request.args.get('cached_only', '0')).lower() in ('1', 'true', 'yes')
+        if cached_only:
+            items = run_async(db.get_public_cached_spotify_playlists(limit=limit))
+        else:
+            items = run_async(db.get_public_spotify_playlists(limit=limit))
         playlists = []
         for p in items:
             playlists.append({
@@ -712,6 +716,8 @@ def get_public_playlists():
                 'owner': getattr(p, 'owner', ''),
                 'spotify_url': getattr(p, 'spotify_url', ''),
                 'total_tracks': getattr(p, 'total_tracks', None),
+                'is_cached_public': bool(getattr(p, 'is_cached_public', 0)),
+                'cached_tracks_count': getattr(p, 'cached_tracks_count', None),
             })
         return jsonify({'playlists': playlists})
     except Exception as e:
@@ -1622,6 +1628,226 @@ def get_history():
         print(f"❌ Get history error: {e}")
         return jsonify({'error': str(e)}), 500
 
+
+def ensure_track_cached(loop, track_id: str, artist: str, track_name: str, image_url: str = None) -> dict:
+    """
+    Гарантировать, что трек есть в Telegram Storage и в локальном кэше БД.
+    Возвращает {'success': bool, 'cached': bool, 'file_id': str|None, 'stream_url': str|None, 'error': str|None}.
+    """
+    if not artist or not track_name:
+        return {'success': False, 'error': 'Artist and track name required'}
+
+    file_id = None
+    telegram_file = loop.run_until_complete(db.get_telegram_file(track_id))
+    if telegram_file:
+        file_id = telegram_file.file_id
+    else:
+        telegram_file_by_name = loop.run_until_complete(db.get_telegram_file_by_name(artist, track_name))
+        if telegram_file_by_name:
+            file_id = telegram_file_by_name.file_id
+        else:
+            for q in ['320', '192', '128', 'FLAC']:
+                file_id = loop.run_until_complete(db.get_cached_file_id(track_id, quality=q))
+                if file_id:
+                    break
+
+    if file_id:
+        # Нормализуем связь track_id -> file_id, чтобы следующий поиск был быстрее.
+        try:
+            track_data = {
+                'id': track_id,
+                'name': track_name,
+                'artist': artist,
+                'spotify_url': f"https://open.spotify.com/search/{artist} {track_name}",
+                'image_url': image_url
+            }
+            loop.run_until_complete(db.get_or_create_track(track_data))
+            loop.run_until_complete(db.update_track_cache(track_id, file_id, 'mp3', '192'))
+            loop.run_until_complete(db.save_telegram_file(
+                track_id=track_id,
+                file_id=file_id,
+                artist=artist,
+                track_name=track_name,
+                image_url=image_url
+            ))
+        except Exception as relink_e:
+            print(f"⚠️ Relink warning for cached track {track_id}: {relink_e}")
+
+        file_url = get_telegram_storage().get_file_url(file_id)
+        return {'success': True, 'cached': True, 'file_id': file_id, 'stream_url': file_url}
+
+    result = loop.run_until_complete(
+        download_service.search_and_download(
+            artist,
+            track_name,
+            '192',
+            'mp3'
+        )
+    )
+    if not result or result.get('error'):
+        return {'success': False, 'error': result.get('error') if result else 'Unknown download error'}
+    if not result.get('file_path') or not os.path.exists(result['file_path']):
+        return {'success': False, 'error': 'File not found after download'}
+
+    file_path = result['file_path']
+    caption = f"🎵 {artist} - {track_name}"
+    upload_result = get_telegram_storage().upload_file(file_path, caption)
+    if not upload_result or not upload_result.get('file_id'):
+        return {'success': False, 'error': 'Failed to upload to Telegram Storage'}
+
+    final_image_url = image_url or result.get('thumbnail')
+    file_id = upload_result['file_id']
+    track_data = {
+        'id': track_id,
+        'name': track_name,
+        'artist': artist,
+        'spotify_url': f"https://open.spotify.com/search/{artist} {track_name}",
+        'image_url': final_image_url
+    }
+    loop.run_until_complete(db.get_or_create_track(track_data))
+    loop.run_until_complete(db.update_track_cache(track_id, file_id, 'mp3', '192'))
+    loop.run_until_complete(db.save_telegram_file(
+        track_id=track_id,
+        file_id=file_id,
+        file_path=upload_result.get('file_path'),
+        file_size=upload_result.get('file_size'),
+        artist=artist,
+        track_name=track_name,
+        image_url=final_image_url
+    ))
+
+    try:
+        download_service.cleanup_file(file_path)
+    except Exception:
+        pass
+
+    file_url = get_telegram_storage().get_file_url(file_id)
+    return {'success': True, 'cached': False, 'file_id': file_id, 'stream_url': file_url}
+
+
+@app.route('/api/spotify-playlists/<string:spotify_id>/cache', methods=['POST'])
+@require_auth
+@rate_limit(SYNC_LIMIT, SYNC_PERIOD)
+def cache_spotify_playlist(spotify_id: str):
+    """Сохранить плейлист в личный список и прогреть кэш всех его треков в Telegram Storage."""
+    try:
+        user_id = getattr(g, 'current_user_id', None)
+        if not user_id:
+            return jsonify({'error': 'Unauthorized'}), 401
+
+        data = request.json or {}
+        requested_limit = data.get('limit', 50)
+        try:
+            limit = int(requested_limit)
+        except (TypeError, ValueError):
+            limit = 50
+        limit = max(1, min(limit, 100))
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        url = f"https://open.spotify.com/playlist/{spotify_id}"
+        info = loop.run_until_complete(spotify_service.get_playlist_info(url))
+        if not info or not info.get('tracks'):
+            loop.close()
+            return jsonify({'error': 'Playlist not found or empty'}), 404
+
+        tracks = (info.get('tracks') or [])[:limit]
+        playlist_name = info.get('name') or 'Playlist'
+        playlist_owner = info.get('owner') or ''
+
+        # Сохраняем плейлист у пользователя
+        loop.run_until_complete(db.save_user_spotify_playlist(
+            user_id=user_id,
+            spotify_id=spotify_id,
+            name=playlist_name,
+            owner=playlist_owner,
+            spotify_url=url,
+            total_tracks=len(info.get('tracks') or []),
+        ))
+        # И сразу в публичный каталог
+        loop.run_until_complete(db.save_public_spotify_playlist(
+            spotify_id=spotify_id,
+            name=playlist_name,
+            owner=playlist_owner,
+            spotify_url=url,
+            total_tracks=len(info.get('tracks') or []),
+            added_by_user_id=user_id,
+        ))
+
+        cached_count = 0
+        uploaded_count = 0
+        failed_count = 0
+        failed_tracks = []
+
+        for t in tracks:
+            tid = (t.get('id') or '').strip()
+            artist = (t.get('artist') or '').strip()
+            name = (t.get('name') or '').strip()
+            if not name or not artist:
+                failed_count += 1
+                if len(failed_tracks) < 5:
+                    failed_tracks.append({'name': name or 'Unknown', 'artist': artist or 'Unknown', 'error': 'Invalid track data'})
+                continue
+
+            if not tid:
+                tid = hashlib.md5(f"{artist}_{name}".lower().encode()).hexdigest()[:16]
+
+            result = ensure_track_cached(loop, tid, artist, name, t.get('image'))
+            if result.get('success'):
+                if result.get('cached'):
+                    cached_count += 1
+                else:
+                    uploaded_count += 1
+            else:
+                failed_count += 1
+                if len(failed_tracks) < 5:
+                    failed_tracks.append({'name': name, 'artist': artist, 'error': result.get('error', 'Unknown error')})
+
+        # Один backup после пакетной операции
+        try:
+            backup_svc = get_backup_service()
+            loop.run_until_complete(backup_svc.backup_to_telegram())
+        except Exception as backup_e:
+            print(f"⚠️ Playlist cache backup failed: {backup_e}")
+
+        # Обновляем публичный статус кэша плейлиста
+        loop.run_until_complete(db.save_public_spotify_playlist(
+            spotify_id=spotify_id,
+            name=playlist_name,
+            owner=playlist_owner,
+            spotify_url=url,
+            total_tracks=len(info.get('tracks') or []),
+            added_by_user_id=user_id,
+            is_cached_public=True,
+            cached_tracks_count=(cached_count + uploaded_count),
+            cached_at=datetime.utcnow(),
+        ))
+
+        loop.close()
+        return jsonify({
+            'success': True,
+            'playlist': {
+                'spotify_id': spotify_id,
+                'name': playlist_name,
+                'owner': playlist_owner,
+                'total_tracks': len(info.get('tracks') or []),
+                'processed_tracks': len(tracks)
+            },
+            'cache_result': {
+                'already_cached': cached_count,
+                'uploaded_new': uploaded_count,
+                'failed': failed_count,
+                'failed_examples': failed_tracks
+            }
+        })
+    except Exception as e:
+        print(f"❌ cache_spotify_playlist error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/prepare-stream', methods=['POST'])
 @require_auth
 @rate_limit(PREPARE_STREAM_LIMIT, PREPARE_STREAM_PERIOD)
@@ -1647,133 +1873,17 @@ def prepare_stream():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
-        # 1. Проверяем кеш в БД (ЛЮБОГО качества, чтобы не плодить дубликаты в канале)
-        # Сначала пробуем найти именно этот трек в Telegram Storage
-        telegram_file = loop.run_until_complete(db.get_telegram_file(track_id))
-        file_id = None
-        
-        if telegram_file:
-            file_id = telegram_file.file_id
-            print(f"✅ Found existing track in Storage by ID: {track_id}")
-        else:
-            # Пробуем по Имени/Артисту (предотвращает "невидимые" дубликаты)
-            telegram_file_by_name = loop.run_until_complete(db.get_telegram_file_by_name(artist, track_name))
-            if telegram_file_by_name:
-                file_id = telegram_file_by_name.file_id
-                print(f"✅ Found existing track in Storage by name: {artist} - {track_name}")
-            else:
-                # В последнюю очередь смотрим старый кэш (любое качество)
-                # Перебираем качества от лучшего к худшему
-                for q in ['320', '192', '128', 'FLAC']:
-                    file_id = loop.run_until_complete(db.get_cached_file_id(track_id, quality=q))
-                    if file_id: break
-        
-        if file_id:
-            # Файл уже в Telegram!
-            print(f"✅ Found in cache: {track_id}")
-            
-            # Получаем прямую ссылку из Telegram
-            file_url = get_telegram_storage().get_file_url(file_id)
-            
-            if file_url:
-                loop.close()
-                return jsonify({
-                    'success': True,
-                    'stream_url': file_url,
-                    'cached': True,
-                    'title': f"{artist} - {track_name}"
-                })
-        
-        # 2. Файла нет в кеше - скачиваем
-        print(f"📥 Downloading: {artist} - {track_name}")
-        result = loop.run_until_complete(
-            download_service.search_and_download(
-                artist,
-                track_name,
-                '192',  # Среднее качество для стриминга
-                'mp3'
-            )
-        )
-        
-        if not result or result.get('error'):
-            error_msg = result.get('error') if result else "Unknown download error"
-            print(f"❌ Download failed details: {error_msg}")
-            loop.close()
-            return jsonify({'error': f"Download failed: {error_msg}"}), 500
-            
-        if not result.get('file_path') or not os.path.exists(result['file_path']):
-            print(f"❌ File not found after download: {result.get('file_path')}")
-            loop.close()
-            return jsonify({'error': 'File not found after download'}), 500
-        
-        file_path = result['file_path']
-        
-        # 3. Загружаем в Telegram Storage
-        print(f"📤 Uploading to Telegram Storage: {os.path.basename(file_path)}")
-        caption = f"🎵 {artist} - {track_name}"
-        upload_result = get_telegram_storage().upload_file(file_path, caption)
-        
-        if not upload_result or not upload_result.get('file_id'):
-            error_details = upload_result.get('error') if upload_result else "Unknown upload error"
-            print(f"❌ Failed to upload to Telegram Storage: {error_details}")
-            loop.close()
-            return jsonify({'error': f'Failed to upload to Telegram Storage: {error_details}'}), 500
-        
-        
-        # 4. Регистрируем трек в БД. Приоритет: Spotify image > YouTube thumbnail
-        final_image_url = image_url or result.get('thumbnail')
-        
-        track_data = {
-            'id': track_id,
-            'name': track_name,
-            'artist': artist,
-            'spotify_url': f"https://open.spotify.com/search/{artist} {track_name}",
-            'image_url': final_image_url
-        }
-        loop.run_until_complete(db.get_or_create_track(track_data))
-        
-        # 5. Сохраняем в обе таблицы кэша для максимальной совместимости
-        file_id = upload_result['file_id']
-        loop.run_until_complete(
-            db.update_track_cache(
-                track_id=track_id,
-                telegram_file_id=file_id,
-                file_format='mp3',
-                quality='192'
-            )
-        )
-        loop.run_until_complete(
-            db.save_telegram_file(
-                track_id=track_id,
-                file_id=file_id,
-                file_path=upload_result.get('file_path'),
-                file_size=upload_result.get('file_size'),
-                artist=artist,
-                track_name=track_name,
-                image_url=final_image_url
-            )
-        )
-        
-        # 6. Получаем прямую ссылку
-        file_url = get_telegram_storage().get_file_url(upload_result['file_id'])
-        
-        # 7. Очистка временного файла
-        try:
-            download_service.cleanup_file(file_path)
-        except:
-            pass
-            
+        result = ensure_track_cached(loop, track_id, artist, track_name, image_url)
         loop.close()
-        
-        if file_url:
+
+        if result.get('success') and result.get('stream_url'):
             return jsonify({
                 'success': True,
-                'stream_url': file_url,
-                'cached': False,
+                'stream_url': result.get('stream_url'),
+                'cached': bool(result.get('cached')),
                 'title': f"{artist} - {track_name}"
             })
-        else:
-            return jsonify({'error': 'Failed to get stream URL after upload'}), 500
+        return jsonify({'error': result.get('error') or 'Failed to prepare stream'}), 500
             
     except Exception as e:
         print(f"❌ Prepare stream error: {e}")

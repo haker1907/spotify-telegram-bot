@@ -61,6 +61,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initializePlaylists();
     initializeUploadTrack();
     initializeViewToggle();
+    loadHomeCachedPlaylists();
     loadLibrary();
     restoreLastPlayedTrackUI();
 
@@ -754,6 +755,29 @@ async function loadLibrary() {
     }
 }
 
+async function loadHomeCachedPlaylists() {
+    try {
+        const section = document.getElementById('homeCachedPlaylistsSection');
+        const grid = document.getElementById('homeCachedPlaylistsGrid');
+        if (!section || !grid) return;
+
+        const response = await fetch('/api/public-playlists?cached_only=1&limit=12');
+        const data = await response.json();
+        const playlists = data.playlists || [];
+
+        if (!playlists.length) {
+            section.style.display = 'none';
+            grid.innerHTML = '';
+            return;
+        }
+
+        section.style.display = 'block';
+        grid.innerHTML = playlists.map(pl => renderSpotifyPlaylistCard(pl)).join('');
+    } catch (error) {
+        console.error('Load home cached playlists error:', error);
+    }
+}
+
 function renderLibraryChunk(reset = false) {
     const libraryGrid = document.getElementById('libraryGrid');
     if (!libraryGrid) return;
@@ -906,25 +930,35 @@ async function playlistAddToMy(spotifyId, name) {
         return;
     }
     try {
-        const resp = await fetch('/api/my-spotify-playlists', {
+        showNotification(`Adding "${name}" and caching playlist tracks...`, 'info');
+        const resp = await fetch(`/api/spotify-playlists/${spotifyId}/cache`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
-            body: JSON.stringify({ spotify_id: spotifyId, name })
+            body: JSON.stringify({ name, limit: 50 })
         });
         const data = await resp.json();
         if (!resp.ok) {
-            showNotification(data.error || 'Failed to save playlist', 'error');
+            showNotification(data.error || 'Failed to add and cache playlist', 'error');
             return;
         }
-        showNotification('Playlist saved to your account', 'success');
+
+        const uploaded = data?.cache_result?.uploaded_new || 0;
+        const alreadyCached = data?.cache_result?.already_cached || 0;
+        const failed = data?.cache_result?.failed || 0;
+        showNotification(
+            `Playlist cached: new ${uploaded}, already ${alreadyCached}, failed ${failed}`,
+            failed > 0 ? 'info' : 'success'
+        );
+
         // Обновляем секцию «My Spotify Playlists», если пользователь на вкладке Playlists
         if (document.querySelector('[data-page="playlists"]')?.classList.contains('active')) {
             loadPlaylists();
         }
+        loadHomeCachedPlaylists();
     } catch (e) {
         console.error('playlistAddToMy error:', e);
-        showNotification('Failed to save playlist', 'error');
+        showNotification('Failed to add and cache playlist', 'error');
     }
 }
 

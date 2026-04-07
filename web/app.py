@@ -194,6 +194,9 @@ def rate_limit(limit: int, per_seconds: int):
     def decorator(fn):
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
+            # limit <= 0: rate limit отключен для эндпоинта.
+            if limit <= 0 or per_seconds <= 0:
+                return fn(*args, **kwargs)
             # Приоритет: user_id из require_auth, иначе IP.
             user_id = getattr(g, "current_user_id", None)
             forwarded_for = request.headers.get("X-Forwarded-For", "")
@@ -211,7 +214,7 @@ def rate_limit(limit: int, per_seconds: int):
 # Defaults (можно переопределить env в Railway)
 DOWNLOAD_LIMIT = int(os.getenv("DOWNLOAD_RATE_LIMIT", "10"))
 DOWNLOAD_PERIOD = int(os.getenv("DOWNLOAD_RATE_PERIOD_SECONDS", "600"))  # 10 минут
-PREPARE_STREAM_LIMIT = int(os.getenv("PREPARE_STREAM_RATE_LIMIT", "10"))
+PREPARE_STREAM_LIMIT = int(os.getenv("PREPARE_STREAM_RATE_LIMIT", "0"))
 PREPARE_STREAM_PERIOD = int(os.getenv("PREPARE_STREAM_RATE_PERIOD_SECONDS", "600"))
 SYNC_LIMIT = int(os.getenv("SYNC_RATE_LIMIT", "1"))
 SYNC_PERIOD = int(os.getenv("SYNC_RATE_PERIOD_SECONDS", "3600"))  # 1 час

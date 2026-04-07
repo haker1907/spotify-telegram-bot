@@ -422,6 +422,16 @@
     </div>
 
     <audio id="audioPlayer" style="display: none;"></audio>
+    <div id="globalLoadingOverlay" class="global-loading-overlay">
+        <div class="global-loading-card">
+            <div class="global-loading-spinner"></div>
+            <div id="globalLoadingText" class="global-loading-text">Processing...</div>
+            <div class="global-loading-progress-track">
+                <div id="globalLoadingProgressFill" class="global-loading-progress-fill"></div>
+            </div>
+            <div id="globalLoadingPercent" class="global-loading-percent">0%</div>
+        </div>
+    </div>
     <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
     <script src="{{ url_for('static', filename='js/modules/ui.js') }}"></script>
     <script src="{{ url_for('static', filename='js/modules/infinite-scroll.js') }}"></script>

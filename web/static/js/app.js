@@ -701,23 +701,61 @@ async function searchTracks(query) {
     }
 }
 
+function setGlobalLoading(message = 'Processing...', percent = 0) {
+    const overlay = document.getElementById('globalLoadingOverlay');
+    const textEl = document.getElementById('globalLoadingText');
+    const fillEl = document.getElementById('globalLoadingProgressFill');
+    const percentEl = document.getElementById('globalLoadingPercent');
+    if (!overlay || !textEl || !fillEl || !percentEl) return;
+
+    const safePercent = Math.max(0, Math.min(100, Number.isFinite(percent) ? percent : 0));
+    overlay.classList.add('active');
+    textEl.textContent = message;
+    fillEl.style.width = `${safePercent}%`;
+    percentEl.textContent = `${Math.round(safePercent)}%`;
+}
+
+function updateGlobalLoading(message, percent) {
+    const overlay = document.getElementById('globalLoadingOverlay');
+    if (!overlay || !overlay.classList.contains('active')) {
+        setGlobalLoading(message || 'Processing...', percent ?? 0);
+        return;
+    }
+    const textEl = document.getElementById('globalLoadingText');
+    const fillEl = document.getElementById('globalLoadingProgressFill');
+    const percentEl = document.getElementById('globalLoadingPercent');
+    const safePercent = Math.max(0, Math.min(100, Number.isFinite(percent) ? percent : 0));
+    if (message && textEl) textEl.textContent = message;
+    if (fillEl) fillEl.style.width = `${safePercent}%`;
+    if (percentEl) percentEl.textContent = `${Math.round(safePercent)}%`;
+}
+
+function hideGlobalLoading() {
+    const overlay = document.getElementById('globalLoadingOverlay');
+    if (!overlay) return;
+    overlay.classList.remove('active');
+}
+
 async function syncLibrary() {
     const btn = document.getElementById('syncLibraryBtn');
     if (!btn) return;
     try {
         btn.classList.add('spinning');
         btn.disabled = true;
+        setGlobalLoading('Syncing discovery library...', 10);
         showNotification('Syncing discovery library...', 'info');
 
         const response = await fetch('/api/sync-library', {
             method: 'POST',
             credentials: 'same-origin'
         });
+        updateGlobalLoading('Applying synced tracks...', 80);
 
         const data = await response.json();
         if (data.success) {
             showNotification(`Sync complete! Added ${data.added_count} tracks.`, 'success');
             loadLibrary(); // Reload the library to show new tracks
+            updateGlobalLoading('Done', 100);
         } else {
             showNotification(data.error || 'Sync failed', 'error');
         }
@@ -727,6 +765,7 @@ async function syncLibrary() {
     } finally {
         btn.classList.remove('spinning');
         btn.disabled = false;
+        setTimeout(hideGlobalLoading, 250);
     }
 }
 
@@ -930,6 +969,7 @@ async function playlistAddToMy(spotifyId, name) {
         return;
     }
     try {
+        setGlobalLoading(`Caching playlist "${name}"...`, 8);
         showNotification(`Adding "${name}" and caching playlist tracks...`, 'info');
         const resp = await fetch(`/api/spotify-playlists/${spotifyId}/cache`, {
             method: 'POST',
@@ -937,6 +977,7 @@ async function playlistAddToMy(spotifyId, name) {
             credentials: 'same-origin',
             body: JSON.stringify({ name, limit: 50 })
         });
+        updateGlobalLoading('Finalizing cached playlist...', 88);
         const data = await resp.json();
         if (!resp.ok) {
             showNotification(data.error || 'Failed to add and cache playlist', 'error');
@@ -956,9 +997,12 @@ async function playlistAddToMy(spotifyId, name) {
             loadPlaylists();
         }
         loadHomeCachedPlaylists();
+        updateGlobalLoading('Done', 100);
     } catch (e) {
         console.error('playlistAddToMy error:', e);
         showNotification('Failed to add and cache playlist', 'error');
+    } finally {
+        setTimeout(hideGlobalLoading, 250);
     }
 }
 
@@ -968,6 +1012,7 @@ async function playlistDownload(spotifyId, name) {
         return;
     }
     try {
+        setGlobalLoading(`Preparing playlist "${name}"...`, 5);
         showNotification(`Preparing download for playlist "${name}"...`, 'info');
         const resp = await fetch(`/api/spotify-playlists/${spotifyId}/tracks`);
         const data = await resp.json();
@@ -984,6 +1029,8 @@ async function playlistDownload(spotifyId, name) {
         // Последовательная загрузка каждого трека, как в startDownload
         for (let i = 0; i < tracks.length; i++) {
             const t = tracks[i];
+            const progress = ((i + 1) / tracks.length) * 100;
+            updateGlobalLoading(`Downloading ${i + 1}/${tracks.length}: ${t.artist} - ${t.name}`, progress);
             showNotification(`Downloading ${i + 1}/${tracks.length}: ${t.artist} — ${t.name}`, 'info');
             try {
                 const response = await fetch('/api/download', {
@@ -1015,9 +1062,12 @@ async function playlistDownload(spotifyId, name) {
             }
         }
         showNotification(`Playlist "${name}" downloaded (first ${tracks.length} tracks).`, 'success');
+        updateGlobalLoading('Done', 100);
     } catch (e) {
         console.error('playlistDownload error:', e);
         showNotification('Failed to download playlist', 'error');
+    } finally {
+        setTimeout(hideGlobalLoading, 250);
     }
 }
 
@@ -1464,12 +1514,14 @@ async function uploadTrack() {
     }
 
     try {
+        setGlobalLoading('Uploading track to channel...', 15);
         showNotification('Uploading track...', 'info');
         const response = await fetch('/api/upload-track', {
             method: 'POST',
             credentials: 'same-origin',
             body: formData
         });
+        updateGlobalLoading('Saving uploaded track...', 80);
         const data = await response.json();
         if (!response.ok || !data.success) {
             showNotification(data.error || 'Upload failed', 'error');
@@ -1484,9 +1536,12 @@ async function uploadTrack() {
         if (coverInput) coverInput.value = '';
 
         await loadLibrary();
+        updateGlobalLoading('Done', 100);
     } catch (error) {
         console.error('Upload track error:', error);
         showNotification('Upload failed', 'error');
+    } finally {
+        setTimeout(hideGlobalLoading, 250);
     }
 }
 
@@ -1658,6 +1713,7 @@ async function createPlaylist() {
     if (!name) return;
 
     try {
+        setGlobalLoading('Creating playlist...', 20);
         const response = await fetch('/api/playlists', {
             method: 'POST',
             headers: {
@@ -1668,12 +1724,16 @@ async function createPlaylist() {
         });
 
         if (response.ok) {
+            updateGlobalLoading('Refreshing playlists...', 85);
             showNotification('Playlist created!', 'success');
             closeCreatePlaylistModal();
             loadPlaylists();
+            updateGlobalLoading('Done', 100);
         }
     } catch (error) {
         showNotification('Failed to create playlist', 'error');
+    } finally {
+        setTimeout(hideGlobalLoading, 250);
     }
 }
 
@@ -1715,6 +1775,7 @@ async function addTrackToPlaylist(playlistId) {
     if (!trackToPlaylist) return;
 
     try {
+        setGlobalLoading('Adding track to playlist...', 25);
         const response = await fetch('/api/playlists/add_track', {
             method: 'POST',
             headers: {
@@ -1729,14 +1790,18 @@ async function addTrackToPlaylist(playlistId) {
 
         const data = await response.json();
         if (response.ok) {
+            updateGlobalLoading('Refreshing playlists...', 85);
             showNotification('Added to playlist!', 'success');
             closeAddToPlaylistModal();
             loadPlaylists();
+            updateGlobalLoading('Done', 100);
         } else {
             showNotification(data.error || 'Failed to add track', 'error');
         }
     } catch (error) {
         showNotification('Critical error', 'error');
+    } finally {
+        setTimeout(hideGlobalLoading, 250);
     }
 }
 
@@ -1759,6 +1824,7 @@ async function startDownload() {
     const quality = document.getElementById('qualitySelect').value;
 
     try {
+        setGlobalLoading('Downloading track...', 25);
         showNotification('Starting download...', 'info');
         const response = await fetch('/api/download', {
             method: 'POST',
@@ -1774,6 +1840,7 @@ async function startDownload() {
                 format: format
             })
         });
+        updateGlobalLoading('Preparing file...', 78);
 
         if (response.ok) {
             const blob = await response.blob();
@@ -1787,11 +1854,14 @@ async function startDownload() {
             document.body.removeChild(a);
             showNotification('Download completed!', 'success');
             closeDownloadModal();
+            updateGlobalLoading('Done', 100);
         } else {
             showNotification('Download failed', 'error');
         }
     } catch (error) {
         showNotification('Download error', 'error');
+    } finally {
+        setTimeout(hideGlobalLoading, 250);
     }
 }
 

@@ -323,7 +323,7 @@ async def handle_spotify_link(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         if not result or not result.get('file_path'):
             await status_msg.edit_text(
-                f"❌ Не удалось скачать трек из доступных источников\n\n"
+                f"❌ Не удалось скачать трек с YouTube\n\n"
                 f"🎵 {track_info['name']}\n"
                 f"👤 {track_info['artist']}\n\n"
                 f"Попробуйте другой трек или откройте в Spotify:\n"
@@ -369,10 +369,8 @@ async def handle_spotify_link(update: Update, context: ContextTypes.DEFAULT_TYPE
                     elif quality == '9200': quality_display = "9200 kbps (Ultra Hi-Res)"
                     else: quality_display = "Lossless"
                 format_label = file_format.upper()
-                source = (result.get('source') or 'youtube').strip()
                 caption = f"🎵 <b>{track_info['name']}</b>\n👤 {track_info['artist']}\n\n" + \
-                          f"🎧 {format_label} • {quality_display}\n" + \
-                          f"📡 Source: {source}"
+                          f"🎧 {format_label} • {quality_display}"
                 
                 # Проверяем, в избранном ли трек
                 is_fav = await db.is_favorite(user_id, track_id) if db else False

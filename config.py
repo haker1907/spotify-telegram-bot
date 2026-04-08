@@ -38,23 +38,6 @@ else:
 STORAGE_CHANNEL_ID = os.getenv('STORAGE_CHANNEL_ID', '-1003748020768')
 print(f"Storage Channel ID: {STORAGE_CHANNEL_ID}")
 
-# --- Legal fallback sources (после неудачи yt-dlp) ---
-# Jamendo: https://developer.jamendo.com — зарегистрируйте приложение и вставьте Client ID.
-JAMENDO_CLIENT_ID = (os.getenv("JAMENDO_CLIENT_ID") or "").strip()
-# Client Secret нужен только для OAuth «от имени пользователя»; текущий код его не использует.
-JAMENDO_CLIENT_SECRET = (os.getenv("JAMENDO_CLIENT_SECRET") or "").strip()
-# Опционально: свой URL поиска/скачивания, подставьте {query} (URL-кодируется автоматически).
-FMA_FALLBACK_URL_TEMPLATE = (os.getenv("FMA_FALLBACK_URL_TEMPLATE") or "").strip()
-# Управление источниками без правки кода.
-# Пример: DOWNLOAD_SOURCE_PRIORITY=youtube,jamendo,archive,fma,ccmixter
-DOWNLOAD_SOURCE_PRIORITY = (os.getenv("DOWNLOAD_SOURCE_PRIORITY") or "youtube,jamendo,archive,fma,ccmixter").strip()
-# Включение/выключение по имени источника (1/0, true/false, on/off)
-SOURCE_ENABLE_YOUTUBE = (os.getenv("SOURCE_ENABLE_YOUTUBE") or "1").strip().lower() in ("1", "true", "yes", "on")
-SOURCE_ENABLE_JAMENDO = (os.getenv("SOURCE_ENABLE_JAMENDO") or "1").strip().lower() in ("1", "true", "yes", "on")
-SOURCE_ENABLE_ARCHIVE = (os.getenv("SOURCE_ENABLE_ARCHIVE") or "1").strip().lower() in ("1", "true", "yes", "on")
-SOURCE_ENABLE_FMA = (os.getenv("SOURCE_ENABLE_FMA") or "1").strip().lower() in ("1", "true", "yes", "on")
-SOURCE_ENABLE_CCMIXTER = (os.getenv("SOURCE_ENABLE_CCMIXTER") or "1").strip().lower() in ("1", "true", "yes", "on")
-
 # Настройки бота
 BOT_NAME = "Music Download Bot"
 BOT_VERSION = "2.1.0"

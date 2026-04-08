@@ -38,6 +38,14 @@ else:
 STORAGE_CHANNEL_ID = os.getenv('STORAGE_CHANNEL_ID', '-1003748020768')
 print(f"Storage Channel ID: {STORAGE_CHANNEL_ID}")
 
+# --- Legal fallback sources (после неудачи yt-dlp) ---
+# Jamendo: https://developer.jamendo.com — зарегистрируйте приложение и вставьте Client ID.
+JAMENDO_CLIENT_ID = (os.getenv("JAMENDO_CLIENT_ID") or "").strip()
+# Client Secret нужен только для OAuth «от имени пользователя»; текущий код его не использует.
+JAMENDO_CLIENT_SECRET = (os.getenv("JAMENDO_CLIENT_SECRET") or "").strip()
+# Опционально: свой URL поиска/скачивания, подставьте {query} (URL-кодируется автоматически).
+FMA_FALLBACK_URL_TEMPLATE = (os.getenv("FMA_FALLBACK_URL_TEMPLATE") or "").strip()
+
 # Настройки бота
 BOT_NAME = "Music Download Bot"
 BOT_VERSION = "2.1.0"

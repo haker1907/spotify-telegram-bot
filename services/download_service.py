@@ -1,13 +1,22 @@
 import os
 import asyncio
 import base64
-from typing import Optional, Dict
+from typing import Optional, Dict, List
+from urllib.parse import quote_plus
+
 import yt_dlp
 import httpx
 import copy
 import glob
 import time
 import re
+
+try:
+    from config import JAMENDO_CLIENT_ID as _CFG_JAMENDO_CLIENT_ID
+    from config import FMA_FALLBACK_URL_TEMPLATE as _CFG_FMA_FALLBACK_URL_TEMPLATE
+except Exception:  # noqa: BLE001
+    _CFG_JAMENDO_CLIENT_ID = ""
+    _CFG_FMA_FALLBACK_URL_TEMPLATE = ""
 
 class DownloadService:
     """Сервис для поиска и скачивания музыки с YouTube"""
@@ -80,6 +89,12 @@ class DownloadService:
         elif self.cookies_browser:
             print(f"Browser cookies disabled: profile not found for '{self.cookies_browser}'")
             print("   Using cookiefile/env cookies fallback.")
+
+        jamendo_id = (_CFG_JAMENDO_CLIENT_ID or os.getenv("JAMENDO_CLIENT_ID", "")).strip()
+        if jamendo_id:
+            print("Legal fallback Jamendo: enabled (JAMENDO_CLIENT_ID is set)")
+        else:
+            print("Legal fallback Jamendo: disabled — set JAMENDO_CLIENT_ID in environment or .env")
 
     def _is_browser_cookies_available(self, browser_value: str) -> bool:
         """Проверка, есть ли профиль браузера в текущем окружении."""
@@ -325,7 +340,190 @@ class DownloadService:
             if candidate_result and candidate_result.get('file_path'):
                 return candidate_result
     
+        # Последний шаг: если YouTube полностью недоступен, пробуем легальные free-источники.
+        if (not result or not result.get('file_path')):
+            legal_result = await self._download_from_legal_sources(search_query, file_format=file_format)
+            if legal_result and legal_result.get('file_path'):
+                return legal_result
+
         return self._polish_error(result)
+
+    async def _download_from_legal_sources(self, search_query: str, file_format: str = 'mp3') -> Optional[Dict]:
+        """
+        Фолбэк на легальные бесплатные источники:
+        Jamendo -> Internet Archive -> Free Music Archive -> ccMixter.
+        """
+        # Для простоты и предсказуемости выдаем легальные фолбэки только в mp3.
+        # Основной поток (yt-dlp) уже покрывает другие форматы.
+        if file_format != 'mp3':
+            return None
+
+        providers = [
+            self._download_from_jamendo,
+            self._download_from_internet_archive,
+            self._download_from_fma,
+            self._download_from_ccmixter,
+        ]
+        last_error = None
+        for provider in providers:
+            try:
+                res = await provider(search_query)
+                if res and res.get('file_path'):
+                    return res
+                if res and res.get('error'):
+                    last_error = res.get('error')
+            except Exception as e:
+                last_error = str(e)
+                print(f"⚠️ Legal fallback provider failed ({provider.__name__}): {e}")
+                continue
+        if last_error:
+            return {'error': f'All legal fallback sources failed: {last_error}'}
+        return None
+
+    def _build_query_tokens(self, search_query: str) -> List[str]:
+        normalized = re.sub(r"[^\w\s-]", " ", search_query or "")
+        normalized = re.sub(r"\s+", " ", normalized).strip().lower()
+        tokens = [t for t in normalized.split(" ") if len(t) > 1]
+        return tokens[:6]
+
+    async def _download_http_file(self, url: str, title_hint: str, source: str) -> Optional[Dict]:
+        safe_name = "".join([c if c.isalnum() or c in " -_" else "_" for c in (title_hint or "track")]).strip()
+        if not safe_name:
+            safe_name = "track"
+        out_path = os.path.join(self.download_dir, f"{safe_name}_{source}.mp3")
+
+        async with httpx.AsyncClient(timeout=45.0, follow_redirects=True) as client:
+            response = await client.get(url)
+            if response.status_code != 200 or not response.content:
+                return None
+            with open(out_path, "wb") as f:
+                f.write(response.content)
+
+        if not os.path.exists(out_path):
+            return None
+        return {
+            'file_path': out_path,
+            'title': title_hint or 'Unknown',
+            'duration': 0,
+            'artist': '',
+            'thumbnail': '',
+            'file_size': os.path.getsize(out_path),
+            'source': source
+        }
+
+    async def _download_from_jamendo(self, search_query: str) -> Optional[Dict]:
+        client_id = (_CFG_JAMENDO_CLIENT_ID or os.getenv("JAMENDO_CLIENT_ID", "")).strip()
+        if not client_id:
+            return {'error': 'JAMENDO_CLIENT_ID is not set'}
+
+        q = search_query.strip()
+        url = "https://api.jamendo.com/v3.0/tracks/"
+        params = {
+            "client_id": client_id,
+            "format": "json",
+            "limit": 1,
+            "audioformat": "mp32",
+            "search": q,
+        }
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            r = await client.get(url, params=params)
+            if r.status_code != 200:
+                return None
+            data = r.json()
+        results = (data or {}).get("results") or []
+        if not results:
+            return None
+        item = results[0]
+        audio_url = item.get("audio")
+        if not audio_url:
+            return None
+        title = item.get("name") or q
+        return await self._download_http_file(audio_url, title, "jamendo")
+
+    async def _download_from_internet_archive(self, search_query: str) -> Optional[Dict]:
+        tokens = self._build_query_tokens(search_query)
+        if not tokens:
+            return None
+        q = " ".join(tokens)
+        search_url = "https://archive.org/advancedsearch.php"
+        params = {
+            "q": f"(title:({q}) OR creator:({q})) AND mediatype:(audio)",
+            "fl[]": ["identifier", "title"],
+            "rows": 1,
+            "page": 1,
+            "output": "json",
+        }
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            sr = await client.get(search_url, params=params)
+            if sr.status_code != 200:
+                return None
+            docs = ((sr.json() or {}).get("response") or {}).get("docs") or []
+            if not docs:
+                return None
+            identifier = docs[0].get("identifier")
+            title = docs[0].get("title") or q
+            if not identifier:
+                return None
+
+            meta_url = f"https://archive.org/metadata/{identifier}"
+            mr = await client.get(meta_url)
+            if mr.status_code != 200:
+                return None
+            files = (mr.json() or {}).get("files") or []
+
+        audio_file = None
+        for f in files:
+            name = (f.get("name") or "").lower()
+            if name.endswith(".mp3"):
+                audio_file = f.get("name")
+                break
+        if not audio_file:
+            return None
+        download_url = f"https://archive.org/download/{identifier}/{audio_file}"
+        return await self._download_http_file(download_url, title, "archive")
+
+    async def _download_from_fma(self, search_query: str) -> Optional[Dict]:
+        """
+        FMA публичного стабильного API без ключа сейчас не предоставляет.
+        Оставляем расширяемую точку: можно задать готовый прямой URL через env.
+        """
+        base = (_CFG_FMA_FALLBACK_URL_TEMPLATE or os.getenv("FMA_FALLBACK_URL_TEMPLATE", "")).strip()
+        if not base:
+            return {'error': 'FMA_FALLBACK_URL_TEMPLATE is not set'}
+        q = quote_plus((search_query or "").strip())
+        url = base.replace("{query}", q)
+        return await self._download_http_file(url, search_query, "fma")
+
+    async def _download_from_ccmixter(self, search_query: str) -> Optional[Dict]:
+        """
+        Для ccMixter используем простой JSON endpoint, если доступен.
+        """
+        q = re.sub(r"\s+", "+", search_query.strip())
+        api_url = f"https://ccmixter.org/api/query?f=json&limit=1&tags={q}"
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            r = await client.get(api_url)
+            if r.status_code != 200:
+                return None
+            try:
+                data = r.json()
+            except Exception:
+                return None
+        if not isinstance(data, list) or not data:
+            return None
+        item = data[0] or {}
+        files = item.get("files") or []
+        if not files:
+            return None
+        audio_url = None
+        for f in files:
+            dl = f.get("download_url") or f.get("file_page_url")
+            if dl and str(dl).lower().endswith(".mp3"):
+                audio_url = dl
+                break
+        if not audio_url:
+            return None
+        title = item.get("upload_name") or search_query
+        return await self._download_http_file(audio_url, title, "ccmixter")
 
     def _is_blocked(self, res: Optional[Dict]) -> bool:
         """Определить, что ошибка связана с блокировкой/недоступностью источника."""

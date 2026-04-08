@@ -1454,11 +1454,13 @@ async function playFromYouTube(track) {
                 showNotification('Now playing!', 'success');
             }
         } else {
-            showNotification(normalizeBackendErrorMessage(data.error) || 'Could not load track', 'error');
+            const msg = normalizeBackendErrorMessage(data?.error) || 'Не удалось загрузить трек. Попробуйте позже.';
+            // Это не "критическая" ошибка пользователя: чаще всего временная проблема источника.
+            showNotification(msg, 'info');
         }
     } catch (error) {
         console.error('Stream error:', error);
-        showNotification('Failed to load track for streaming', 'error');
+        showNotification('Не удалось загрузить трек для прослушивания. Попробуйте позже.', 'info');
     }
 }
 
@@ -2154,7 +2156,7 @@ function normalizeBackendErrorMessage(message) {
         lower.includes('track is not cached yet and source search failed') &&
         lower.includes('save to channel for everyone')
     ) {
-        return 'Track is not cached yet and auto-download failed from source. Please try again later.';
+        return 'Трек ещё не закэширован и источник сейчас недоступен. Попробуйте позже. Если у вас есть доступ — сначала нажмите “Save to channel for everyone”, чтобы закэшировать трек.';
     }
     return raw;
 }

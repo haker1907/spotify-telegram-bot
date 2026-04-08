@@ -857,7 +857,10 @@ function xhrRequest(url, { method = 'GET', headers = {}, body = null, responseTy
             resolve({
                 ok: xhr.status >= 200 && xhr.status < 300,
                 status: xhr.status,
-                data
+                data,
+                headers: {
+                    trackSource: xhr.getResponseHeader('X-Track-Source')
+                }
             });
         };
         xhr.onerror = () => reject(new Error('Network error'));
@@ -1276,6 +1279,10 @@ async function playlistDownload(spotifyId, name) {
                 });
                 if (!response.ok) {
                     continue;
+                }
+                const source = response.headers?.trackSource;
+                if (source) {
+                    showNotification(`Source: ${source}`, 'info');
                 }
                 const blob = response.data;
                 const url = window.URL.createObjectURL(blob);
@@ -2117,6 +2124,10 @@ async function startDownload() {
         });
 
         if (response.ok) {
+            const source = response.headers?.trackSource;
+            if (source) {
+                showNotification(`Downloaded from: ${source}`, 'success');
+            }
             const blob = response.data;
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');

@@ -14,9 +14,21 @@ import re
 try:
     from config import JAMENDO_CLIENT_ID as _CFG_JAMENDO_CLIENT_ID
     from config import FMA_FALLBACK_URL_TEMPLATE as _CFG_FMA_FALLBACK_URL_TEMPLATE
+    from config import DOWNLOAD_SOURCE_PRIORITY as _CFG_DOWNLOAD_SOURCE_PRIORITY
+    from config import SOURCE_ENABLE_YOUTUBE as _CFG_SOURCE_ENABLE_YOUTUBE
+    from config import SOURCE_ENABLE_JAMENDO as _CFG_SOURCE_ENABLE_JAMENDO
+    from config import SOURCE_ENABLE_ARCHIVE as _CFG_SOURCE_ENABLE_ARCHIVE
+    from config import SOURCE_ENABLE_FMA as _CFG_SOURCE_ENABLE_FMA
+    from config import SOURCE_ENABLE_CCMIXTER as _CFG_SOURCE_ENABLE_CCMIXTER
 except Exception:  # noqa: BLE001
     _CFG_JAMENDO_CLIENT_ID = ""
     _CFG_FMA_FALLBACK_URL_TEMPLATE = ""
+    _CFG_DOWNLOAD_SOURCE_PRIORITY = "youtube,jamendo,archive,fma,ccmixter"
+    _CFG_SOURCE_ENABLE_YOUTUBE = True
+    _CFG_SOURCE_ENABLE_JAMENDO = True
+    _CFG_SOURCE_ENABLE_ARCHIVE = True
+    _CFG_SOURCE_ENABLE_FMA = True
+    _CFG_SOURCE_ENABLE_CCMIXTER = True
 
 class DownloadService:
     """Сервис для поиска и скачивания музыки с YouTube"""
@@ -95,6 +107,31 @@ class DownloadService:
             print("Legal fallback Jamendo: enabled (JAMENDO_CLIENT_ID is set)")
         else:
             print("Legal fallback Jamendo: disabled — set JAMENDO_CLIENT_ID in environment or .env")
+        print(f"Source priority: {self._get_source_priority()}")
+
+    def _is_source_enabled(self, source_name: str) -> bool:
+        env_map = {
+            "youtube": _CFG_SOURCE_ENABLE_YOUTUBE,
+            "jamendo": _CFG_SOURCE_ENABLE_JAMENDO,
+            "archive": _CFG_SOURCE_ENABLE_ARCHIVE,
+            "fma": _CFG_SOURCE_ENABLE_FMA,
+            "ccmixter": _CFG_SOURCE_ENABLE_CCMIXTER,
+        }
+        return bool(env_map.get(source_name, True))
+
+    def _get_source_priority(self) -> List[str]:
+        raw = (_CFG_DOWNLOAD_SOURCE_PRIORITY or "").strip().lower()
+        if not raw:
+            raw = "youtube,jamendo,archive,fma,ccmixter"
+        order = [x.strip() for x in raw.split(",") if x.strip()]
+        valid = {"youtube", "jamendo", "archive", "fma", "ccmixter"}
+        order = [x for x in order if x in valid]
+        if "youtube" not in order:
+            order.insert(0, "youtube")
+        for item in ["jamendo", "archive", "fma", "ccmixter"]:
+            if item not in order:
+                order.append(item)
+        return order
 
     def _is_browser_cookies_available(self, browser_value: str) -> bool:
         """Проверка, есть ли профиль браузера в текущем окружении."""
@@ -279,10 +316,12 @@ class DownloadService:
         Внутренняя логика ротации клиентов (4 попытки + поиск альтернатив)
         """
         loop = asyncio.get_event_loop()
+        youtube_enabled = self._is_source_enabled("youtube")
+        result = {'error': 'YouTube source is disabled by config'} if not youtube_enabled else None
         
         # Для текстового поиска сразу используем стратегию кандидатных URL,
         # иначе ytsearch1 часто зацикливается на одном "битом" видео.
-        if not youtube_url and isinstance(download_target, str) and not download_target.startswith("http"):
+        if youtube_enabled and not youtube_url and isinstance(download_target, str) and not download_target.startswith("http"):
             candidate_result = await self._download_from_search_candidates(
                 search_query=search_query,
                 ydl_opts=ydl_opts,
@@ -292,7 +331,7 @@ class DownloadService:
             if candidate_result and candidate_result.get('file_path'):
                 return candidate_result
             result = candidate_result or {'error': 'Search candidates exhausted'}
-        else:
+        elif youtube_enabled:
             # Попытка 1: Стандартные клиенты yt-dlp (Без переопределения)
             # yt-dlp сам знает, какие клиенты работают лучше всего для избегания ошибок PO Token
             result = None
@@ -320,7 +359,7 @@ class DownloadService:
                 attempt_opts['extractor_args']['youtube']['player_client'] = ['default']
                 result = await loop.run_in_executor(None, self._download_sync, download_target, attempt_opts, file_format)
     
-        if self._should_try_search(result) and youtube_url:
+        if youtube_enabled and self._should_try_search(result) and youtube_url:
             attempt_opts = copy.deepcopy(ydl_opts)
             attempt_opts['cookiefile'] = None
             attempt_opts.pop('cookiesfrombrowser', None)
@@ -330,7 +369,7 @@ class DownloadService:
 
         # Если первый поисковый результат тоже недоступен, пробуем несколько кандидатов.
         # Это важно для кейса "Video unavailable" на конкретном видео.
-        if self._should_try_search(result):
+        if youtube_enabled and self._should_try_search(result):
             candidate_result = await self._download_from_search_candidates(
                 search_query=search_query,
                 ydl_opts=ydl_opts,
@@ -358,26 +397,42 @@ class DownloadService:
         if file_format != 'mp3':
             return None
 
-        providers = [
-            self._download_from_jamendo,
-            self._download_from_internet_archive,
-            self._download_from_fma,
-            self._download_from_ccmixter,
-        ]
+        providers = {
+            "jamendo": self._download_from_jamendo,
+            "archive": self._download_from_internet_archive,
+            "fma": self._download_from_fma,
+            "ccmixter": self._download_from_ccmixter,
+        }
+        query_variants = self._build_legal_query_variants(search_query)
         last_error = None
-        for provider in providers:
-            try:
-                res = await provider(search_query)
-                if res and res.get('file_path'):
-                    return res
-                if res and res.get('error'):
-                    last_error = res.get('error')
-            except Exception as e:
-                last_error = str(e)
-                print(f"⚠️ Legal fallback provider failed ({provider.__name__}): {e}")
-                continue
+        last_provider = None
+
+        for q in query_variants:
+            for source_name in self._get_source_priority():
+                if source_name == "youtube":
+                    continue
+                if not self._is_source_enabled(source_name):
+                    continue
+                provider = providers.get(source_name)
+                if not provider:
+                    continue
+                last_provider = source_name
+                try:
+                    print(f"🔁 Legal fallback: trying {source_name} q='{q}'")
+                    res = await provider(q)
+                    if res and res.get('file_path'):
+                        return res
+                    if res and res.get('error'):
+                        last_error = res.get('error')
+                    else:
+                        print(f"   {source_name}: no result")
+                except Exception as e:
+                    last_error = str(e)
+                    print(f"⚠️ Legal fallback provider failed ({source_name}): {e}")
+                    continue
+
         if last_error:
-            return {'error': f'All legal fallback sources failed: {last_error}'}
+            return {'error': f'All legal fallback sources failed (last: {last_provider}): {last_error}'}
         return None
 
     def _build_query_tokens(self, search_query: str) -> List[str]:
@@ -385,6 +440,39 @@ class DownloadService:
         normalized = re.sub(r"\s+", " ", normalized).strip().lower()
         tokens = [t for t in normalized.split(" ") if len(t) > 1]
         return tokens[:6]
+
+    def _build_legal_query_variants(self, search_query: str, limit: int = 4) -> List[str]:
+        """
+        Подготавливаем несколько вариантов запроса, чтобы увеличить шанс найти трек
+        на Jamendo/Archive/FMA/ccMixter.
+        """
+        raw = (search_query or "").strip()
+        if not raw:
+            return []
+
+        cleaned = raw
+        # убираем популярные суффиксы и скобки: "(official audio)", "[remix]" и т.п.
+        cleaned = re.sub(r"\(.*?\)|\[.*?\]", " ", cleaned)
+        cleaned = re.sub(r"(?i)\b(official\s+audio|official|audio|topic|remix|mix)\b", " ", cleaned)
+        cleaned = re.sub(r"(?i)\b(feat\.?|ft\.?)\b.*$", "", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+        variants = [raw]
+        if cleaned and cleaned.lower() != raw.lower():
+            variants.append(cleaned)
+
+        # если есть разделитель "-", пробуем отдельно левую/правую части
+        if "-" in raw:
+            parts = [p.strip() for p in raw.split("-", 1)]
+            if len(parts) == 2:
+                if parts[0]:
+                    variants.append(parts[0])
+                if parts[1]:
+                    variants.append(parts[1])
+
+        # дедупликация, сохранение порядка
+        variants = list(dict.fromkeys([v for v in variants if v and len(v) > 2]))
+        return variants[:limit]
 
     async def _download_http_file(self, url: str, title_hint: str, source: str) -> Optional[Dict]:
         safe_name = "".join([c if c.isalnum() or c in " -_" else "_" for c in (title_hint or "track")]).strip()
@@ -832,7 +920,8 @@ class DownloadService:
                     'duration': duration,
                     'artist': downloaded_info.get('artist', ''),
                     'thumbnail': downloaded_info.get('thumbnail', ''),
-                    'file_size': os.path.getsize(file_path)
+                    'file_size': os.path.getsize(file_path),
+                    'source': 'youtube'
                 }
 
             except yt_dlp.utils.DownloadError as e:

@@ -1277,11 +1277,13 @@ def download():
                     loop.run_until_complete(backup_svc.backup_to_telegram())
                 except Exception as reg_e:
                     print(f"⚠️ Warning: Registration in discovery failed: {reg_e}")
-                return send_file(
+                response = send_file(
                     file_path,
                     as_attachment=True,
                     download_name=f"{track_artist} - {track_name}.{file_format}"
                 )
+                response.headers['X-Track-Source'] = result.get('source', 'unknown')
+                return response
             else:
                 error_msg = result.get('error') if result else "Unknown error"
                 loop.close()
@@ -1366,11 +1368,13 @@ def download():
                 print(f"⚠️ Warning: Registration in discovery failed: {reg_e}")
 
             loop.close()
-            return send_file(
+            response = send_file(
                 file_path,
                 as_attachment=True,
                 download_name=f"{track_info['artist']} - {track_info['name']}.{file_format}"
             )
+            response.headers['X-Track-Source'] = result.get('source', 'unknown')
+            return response
         else:
             error_msg = result.get('error') if result else "Unknown error"
             if 'loop' in locals() and not loop.is_closed():
